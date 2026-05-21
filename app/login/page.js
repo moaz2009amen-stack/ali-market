@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Input from '@/components/ui/Input'
 import Button from '@/components/ui/Button'
-import { Mail, Lock, ShoppingBag } from 'lucide-react'
+import { User, Lock, ShoppingBag } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 export default function LoginPage() {
@@ -12,7 +12,7 @@ export default function LoginPage() {
   const supabase = createClient()
   
   const [formData, setFormData] = useState({
-    email: '',
+    username: '',
     password: ''
   })
   const [loading, setLoading] = useState(false)
@@ -21,7 +21,6 @@ export default function LoginPage() {
   const handleChange = (e) => {
     const { name, value } = e.target
     setFormData(prev => ({ ...prev, [name]: value }))
-    // مسح الخطأ عند الكتابة
     if (errors[name]) {
       setErrors(prev => ({ ...prev, [name]: '' }))
     }
@@ -30,10 +29,8 @@ export default function LoginPage() {
   const validate = () => {
     const newErrors = {}
     
-    if (!formData.email) {
-      newErrors.email = 'البريد الإلكتروني مطلوب'
-    } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
-      newErrors.email = 'البريد الإلكتروني غير صحيح'
+    if (!formData.username) {
+      newErrors.username = 'اسم المستخدم مطلوب'
     }
     
     if (!formData.password) {
@@ -54,21 +51,30 @@ export default function LoginPage() {
     setLoading(true)
     
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: formData.email,
-        password: formData.password,
-      })
+      // البحث عن المستخدم بـ username
+      const { data: userData, error: userError } = await supabase
+        .from('users')
+        .select('id, email, password_hash')
+        .eq('username', formData.username)
+        .single()
 
-      if (error) {
-        if (error.message.includes('Invalid login credentials')) {
-          toast.error('البريد الإلكتروني أو كلمة المرور غير صحيحة')
-        } else {
-          toast.error('حدث خطأ أثناء تسجيل الدخول')
-        }
+      if (userError || !userData) {
+        toast.error('اسم المستخدم أو كلمة المرور غير صحيحة')
         return
       }
 
-      if (data.user) {
+      // التحقق من كلمة المرور
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: userData.email,
+        password: formData.password,
+      })
+
+      if (authError) {
+        toast.error('اسم المستخدم أو كلمة المرور غير صحيحة')
+        return
+      }
+
+      if (authData.user) {
         toast.success('تم تسجيل الدخول بنجاح')
         router.push('/dashboard')
         router.refresh()
@@ -101,14 +107,14 @@ export default function LoginPage() {
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <Input
-              label="البريد الإلكتروني"
-              type="email"
-              name="email"
-              value={formData.email}
+              label="اسم المستخدم"
+              type="text"
+              name="username"
+              value={formData.username}
               onChange={handleChange}
-              placeholder="example@email.com"
-              icon={<Mail size={20} />}
-              error={errors.email}
+              placeholder="اسم المستخدم"
+              icon={<User size={20} />}
+              error={errors.username}
               required
             />
 
@@ -134,14 +140,6 @@ export default function LoginPage() {
               {loading ? 'جاري تسجيل الدخول...' : 'تسجيل الدخول'}
             </Button>
           </form>
-
-          {/* Demo Account Info */}
-          <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-            <p className="text-sm text-blue-800 text-center">
-              <strong>حساب تجريبي:</strong><br />
-              owner@alimarket.com / 123456
-            </p>
-          </div>
         </div>
 
         {/* Footer */}
