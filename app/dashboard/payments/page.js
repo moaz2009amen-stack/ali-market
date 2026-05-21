@@ -1,1 +1,330 @@
+'use client'
+import { useEffect, useState } from 'react'
+import { createClient } from '@/lib/supabase/client'
+import Card from '@/components/ui/Card'
+import Button from '@/components/ui/Button'
+import Table from '@/components/ui/Table'
+import Modal from '@/components/ui/Modal'
+import Input from '@/components/ui/Input'
+import Select from '@/components/ui/Select'
+import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { Plus, DollarSign, TrendingUp, Calendar } from 'lucide-react'
+import { formatCurrency, formatDateTime } from '@/lib/utils/format'
+import toast from 'react-hot-toast'
 
+export default function PaymentsPage() {
+  const supabase = createClient()
+  const [payments, setPayments] = useState([])
+  const [customers, setCustomers] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [modalOpen, setModalOpen] = useState(false)
+  const [formData, setFormData] = useState({
+    customer_id: '',
+    amount: '',
+    payment_method: 'نقدي',
+    notes: ''
+  })
+  const [errors, setErrors] = useState({})
+
+  useEffect(() => {
+    fetchData()
+  }, [])
+
+  async function fetchData() {
+    try {
+      // جلب التحصيلات
+      const { data: paymentsData, error: paymentsError } = await supabase
+        .from('payments')
+        .select(`
+          *,
+          customers (name, shop_name),
+          users (full_name)
+        `)
+        .order('created_at', { ascending: false })
+
+      if (paymentsError) throw paymentsError
+
+      // جلب العملاء الذين عليهم ديون
+      const { data: customersData, error: customersError } = await supabase
+        .from('customers')
+        .select('id, name, shop_name, total_debt')
+        .gt('total_debt', 0)
+        .order('name')
+
+      if (customersError) throw customersError
+
+      setPayments(paymentsData?.map(p => ({
+        ...p,
+        customer_name: p.customers?.name || 'غير معروف',
+        collected_by_name: p.users?.full_name || 'غير معروف'
+      })) || [])
+      
+      setCustomers(customersData || [])
+    } catch (error) {
+      console.error('Error fetching payments:', error)
+      toast.error('حدث خطأ في تحميل التحصيلات')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleChange = (e) => {
+    const { name, value } = e.target
+    setFormData(prev => ({ ...prev, [name]: value }))
+    if (errors[name]) {
+      setErrors(prev => ({ ...prev, [name]: '' }))
+    }
+  }
+
+  const validate = () => {
+    const newErrors = {}
+    
+    if (!formData.customer_id) newErrors.customer_id = 'يرجى اختيار العميل'
+    if (!formData.amount || formData.amount <= 0) newErrors.amount = 'المبلغ غير صحيح'
+    
+    // التحقق من أن المبلغ لا يتجاوز الدين
+    const customer = customers.find(c => c.id === formData.customer_id)
+    if (customer && parseFloat(formData.amount) > customer.total_debt) {
+      newErrors.amount = `المبلغ أكبر من الدين المستحق (${formatCurrency(customer.total_debt)})`
+    }
+    
+    setErrors(newErrors)
+    return Object.keys(newErrors).length === 0
+  }
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    
+    if (!validate()) return
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      
+      const { error } = await supabase
+        .from('payments')
+        .insert([{
+          customer_id: formData.customer_id,
+          amount: parseFloat(formData.amount),
+          payment_method: formData.payment_method,
+          notes: formData.notes,
+          collected_by: user.id
+        }])
+
+      if (error) throw error
+      
+      toast.success('تم تسجيل التحصيل بنجاح')
+      fetchData()
+      closeModal()
+    } catch (error) {
+      console.error('Error saving payment:', error)
+      toast.error('حدث خطأ في حفظ التحصيل')
+    }
+  }
+
+  const openModal = () => {
+    setFormData({
+      customer_id: '',
+      amount: '',
+      payment_method: 'نقدي',
+      notes: ''
+    })
+    setErrors({})
+    setModalOpen(true)
+  }
+
+  const closeModal = () => {
+    setModalOpen(false)
+    setErrors({})
+  }
+
+  const columns = [
+    { 
+      header: 'التاريخ', 
+      accessor: 'created_at',
+      render: (row) => formatDateTime(row.created_at)
+    },
+    { 
+      header: 'العميل', 
+      accessor: 'customer_name'
+    },
+    { 
+      header: 'المبلغ', 
+      accessor: 'amount',
+      render: (row) => (
+        <span className="font-semibold text-success-600">
+          {formatCurrency(row.amount)}
+        </span>
+      )
+    },
+    { 
+      header: 'طريقة الدفع', 
+      accessor: 'payment_method'
+    },
+    { 
+      header: 'المحصّل', 
+      accessor: 'collected_by_name'
+    },
+    { 
+      header: 'ملاحظات', 
+      accessor: 'notes',
+      render: (row) => row.notes || '-'
+    },
+  ]
+
+  // حساب الإحصائيات
+  const today = new Date().toISOString().split('T')[0]
+  const stats = {
+    totalPayments: payments.length,
+    todayPayments: payments.filter(p => p.created_at.startsWith(today)).length,
+    totalAmount: payments.reduce((sum, p) => sum + p.amount, 0),
+    todayAmount: payments.filter(p => p.created_at.startsWith(today))
+      .reduce((sum, p) => sum + p.amount, 0)
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <LoadingSpinner size="lg" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* إحصائيات */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card padding={false} className="p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-600">إجمالي التحصيلات</p>
+              <p className="text-2xl font-bold text-gray-900">{stats.totalPayments}</p>
+            </div>
+            <div className="w-12 h-12 bg-primary-100 rounded-lg flex items-center justify-center">
+              <DollarSign className="text-primary-600" size={24} />
+            </div>
+          </div>
+        </Card>
+
+        <Card padding={false} className="p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-600">تحصيلات اليوم</p>
+              <p className="text-2xl font-bold text-success-600">{stats.todayPayments}</p>
+            </div>
+            <div className="w-12 h-12 bg-success-100 rounded-lg flex items-center justify-center">
+              <Calendar className="text-success-600" size={24} />
+            </div>
+          </div>
+        </Card>
+
+        <Card padding={false} className="p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-600">إجمالي المبالغ</p>
+              <p className="text-2xl font-bold text-primary-600">{formatCurrency(stats.totalAmount)}</p>
+            </div>
+            <div className="w-12 h-12 bg-primary-100 rounded-lg flex items-center justify-center">
+              <TrendingUp className="text-primary-600" size={24} />
+            </div>
+          </div>
+        </Card>
+
+        <Card padding={false} className="p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-600">تحصيلات اليوم</p>
+              <p className="text-2xl font-bold text-success-600">{formatCurrency(stats.todayAmount)}</p>
+            </div>
+            <div className="w-12 h-12 bg-success-100 rounded-lg flex items-center justify-center">
+              <DollarSign className="text-success-600" size={24} />
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      {/* جدول التحصيلات */}
+      <Card 
+        title="التحصيلات"
+        action={
+          <Button onClick={openModal} size="md">
+            <Plus size={20} />
+            تسجيل تحصيل
+          </Button>
+        }
+      >
+        <Table
+          columns={columns}
+          data={payments}
+          loading={loading}
+          emptyMessage="لا توجد تحصيلات"
+        />
+      </Card>
+
+      {/* Modal تسجيل تحصيل */}
+      <Modal
+        isOpen={modalOpen}
+        onClose={closeModal}
+        title="تسجيل تحصيل جديد"
+        size="md"
+      >
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <Select
+            label="العميل"
+            name="customer_id"
+            value={formData.customer_id}
+            onChange={handleChange}
+            options={customers.map(c => ({
+              value: c.id,
+              label: `${c.name} - ${formatCurrency(c.total_debt)}`
+            }))}
+            placeholder="اختر العميل"
+            required
+            error={errors.customer_id}
+          />
+
+          <Input
+            label="المبلغ المدفوع"
+            type="number"
+            name="amount"
+            value={formData.amount}
+            onChange={handleChange}
+            placeholder="0.00"
+            step="0.01"
+            required
+            error={errors.amount}
+          />
+
+          <Select
+            label="طريقة الدفع"
+            name="payment_method"
+            value={formData.payment_method}
+            onChange={handleChange}
+            options={[
+              { value: 'نقدي', label: 'نقدي' },
+              { value: 'فيزا', label: 'فيزا' },
+              { value: 'تحويل بنكي', label: 'تحويل بنكي' },
+              { value: 'شيك', label: 'شيك' },
+            ]}
+          />
+
+          <Input
+            label="ملاحظات (اختياري)"
+            name="notes"
+            value={formData.notes}
+            onChange={handleChange}
+            placeholder="أي ملاحظات..."
+          />
+
+          <div className="flex gap-3 pt-4">
+            <Button type="submit" variant="primary" fullWidth>
+              تسجيل التحصيل
+            </Button>
+            <Button type="button" variant="secondary" fullWidth onClick={closeModal}>
+              إلغاء
+            </Button>
+          </div>
+        </form>
+      </Modal>
+    </div>
+  )
+}
