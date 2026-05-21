@@ -37,9 +37,9 @@ export default function Header({ onMenuClick, title = 'الرئيسية' }) {
           {/* User Avatar (Desktop) */}
           <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-gray-100 rounded-lg">
             <div className="w-8 h-8 bg-primary-600 rounded-full flex items-center justify-center">
-              <span className="text-white text-sm font-semibold">ع</span>
+              <span className="text-white text-sm font-semibold">A</span>
             </div>
-            <span className="text-sm font-medium text-gray-700">علي</span>
+            <span className="text-sm font-medium text-gray-700">أيمن</span>
           </div>
         </div>
       </div>
