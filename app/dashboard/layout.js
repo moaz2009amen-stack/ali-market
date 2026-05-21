@@ -18,30 +18,47 @@ export default function DashboardLayout({ children }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // التحقق من الجلسة المحفوظة
     checkUser()
+
+    // الاستماع لتغييرات الـ Auth
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (event === 'SIGNED_OUT') {
+          router.push('/login')
+        } else if (event === 'SIGNED_IN') {
+          checkUser()
+        }
+      }
+    )
+
+    return () => {
+      authListener.subscription.unsubscribe()
+    }
   }, [])
 
   async function checkUser() {
     try {
-      const { data: { user } } = await supabase.auth.getUser()
+      // جلب الجلسة الحالية
+      const { data: { session } } = await supabase.auth.getSession()
       
-      if (!user) {
+      if (!session) {
         router.push('/login')
         return
       }
 
+      const user = session.user
       setUser(user)
 
-      // جلب role المستخدم من قاعدة البيانات
+      // جلب role المستخدم
       const { data: userData, error } = await supabase
         .from('users')
-        .select('role')
+        .select('role, username')
         .eq('id', user.id)
         .single()
 
       if (error) {
         console.error('Error fetching user role:', error)
-        // افتراضياً employee
         setUserRole('employee')
       } else {
         setUserRole(userData?.role || 'employee')
@@ -66,26 +83,22 @@ export default function DashboardLayout({ children }) {
     <div className="min-h-screen bg-gray-50 flex">
       <Toast />
       
-      {/* Sidebar */}
       <Sidebar 
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         userRole={userRole}
       />
 
-      {/* Main Content */}
       <div className="flex-1 flex flex-col">
         <Header 
           onMenuClick={() => setSidebarOpen(!sidebarOpen)}
         />
         
-        {/* Page Content */}
         <main className="flex-1 overflow-y-auto p-4 lg:p-6 pb-20 lg:pb-6">
           {children}
         </main>
       </div>
 
-      {/* Mobile Bottom Navigation */}
       <MobileNav />
     </div>
   )
