@@ -91,30 +91,53 @@ export default function SuppliersPage() {
         name: formData.name,
         company_name: formData.company_name,
         phone: formData.phone,
-        email: formData.email,
         address: formData.address,
         products_supplied: formData.products_supplied,
         payment_terms: formData.payment_terms,
         username: formData.username || null,
-        supplier_password: formData.supplier_password || null,
         can_login: formData.can_login
       }
 
       if (editMode && currentSupplier) {
-        // في حالة التعديل، لا نحدث الباسورد إلا لو تم إدخال باسورد جديد
-        if (!formData.supplier_password) {
-          delete supplierData.supplier_password
-        }
-        
+        // تعديل مورد
         const { error } = await supabase
           .from('suppliers')
           .update(supplierData)
           .eq('id', currentSupplier.id)
 
         if (error) throw error
+        
+        // تحديث الباسورد إذا تم إدخال واحد جديد
+        if (formData.can_login && formData.supplier_password && currentSupplier.email) {
+          await supabase.auth.updateUser({
+            password: formData.supplier_password
+          })
+        }
+        
         toast.success('تم تحديث المورد بنجاح')
       } else {
+        // إضافة مورد جديد
         const { data: { user } } = await supabase.auth.getUser()
+        
+        // إذا كان المورد يمكنه تسجيل الدخول، نحتاج إنشاء حساب له
+        let supplierEmail = formData.email || `${formData.username}@alimarket.supplier`
+        
+        if (formData.can_login) {
+          // إنشاء المستخدم في Authentication
+          const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+            email: supplierEmail,
+            password: formData.supplier_password,
+            email_confirm: true
+          })
+
+          if (authError) {
+            toast.error('حدث خطأ في إنشاء حساب المورد')
+            setLoading(false)
+            return
+          }
+          
+          supplierData.email = supplierEmail
+        }
         
         const { error } = await supabase
           .from('suppliers')
