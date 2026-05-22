@@ -13,6 +13,7 @@ import { formatCurrency, formatDate } from '@/lib/utils/format'
 import { exportInvoicePDF, printThermalInvoice } from '@/lib/utils/exports'
 import toast from 'react-hot-toast'
 import InvoicePreview from '@/components/invoice/InvoicePreview'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
 
 export default function InvoicesPage() {
   const router = useRouter()
@@ -24,6 +25,8 @@ export default function InvoicesPage() {
   const [bulkDeleteModalOpen, setBulkDeleteModalOpen] = useState(false)
   const [deleteRange, setDeleteRange] = useState('')
   const [previewInvoice, setPreviewInvoice] = useState(null)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [invoiceToDelete, setInvoiceToDelete] = useState(null)
 
   useEffect(() => {
     fetchInvoices()
@@ -95,22 +98,25 @@ export default function InvoicesPage() {
     }
   }
 
-  const handleDeleteInvoice = async (invoiceId) => {
+  const handleDeleteInvoice = async (invoice) => {
     if (userRole !== 'owner') {
       toast.error('غير مصرح لك بحذف الفواتير')
       return
     }
 
-    if (!confirm('هل أنت متأكد من حذف هذه الفاتورة؟ لا يمكن التراجع عن هذا الإجراء.')) {
-      return
-    }
+    setInvoiceToDelete(invoice)
+    setDeleteConfirmOpen(true)
+  }
+
+  const confirmDelete = async () => {
+    if (!invoiceToDelete) return
 
     try {
-      // حذف بنود الفاتورة أولاً
+      // حذف بنود الفاتورة
       const { error: itemsError } = await supabase
         .from('invoice_items')
         .delete()
-        .eq('invoice_id', invoiceId)
+        .eq('invoice_id', invoiceToDelete.id)
 
       if (itemsError) throw itemsError
 
@@ -118,11 +124,13 @@ export default function InvoicesPage() {
       const { error: invoiceError } = await supabase
         .from('invoices')
         .delete()
-        .eq('id', invoiceId)
+        .eq('id', invoiceToDelete.id)
 
       if (invoiceError) throw invoiceError
 
       toast.success('تم حذف الفاتورة بنجاح')
+      setDeleteConfirmOpen(false)
+      setInvoiceToDelete(null)
       fetchInvoices()
     } catch (error) {
       console.error('Error deleting invoice:', error)
@@ -300,7 +308,7 @@ export default function InvoicesPage() {
               </button>
               
               <button
-                onClick={() => handleDeleteInvoice(row.id)}
+                onClick={() => handleDeleteInvoice(row)}
                 className="p-2 text-danger-600 hover:bg-danger-50 rounded-lg transition-colors"
                 title="حذف"
               >
@@ -483,6 +491,18 @@ export default function InvoicesPage() {
           }}
         />
       )}
+
+      <ConfirmDialog
+        isOpen={deleteConfirmOpen}
+        onClose={() => {
+          setDeleteConfirmOpen(false)
+          setInvoiceToDelete(null)
+        }}
+        onConfirm={confirmDelete}
+        title="حذف الفاتورة"
+        message={`هل أنت متأكد من حذف الفاتورة #${invoiceToDelete?.invoice_number}؟ سيتم حذف جميع البيانات المرتبطة بها.`}
+        confirmText="حذف الفاتورة"
+      />
     </div>
   )
 }
