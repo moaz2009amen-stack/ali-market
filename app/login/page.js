@@ -12,58 +12,65 @@ export default function LoginPage() {
   const supabase = createClient()
   
   const [formData, setFormData] = useState({
-    email: 'owner@alimarket.com',  // قيمة افتراضية للتجربة
-    password: '123456'
+    username: '',  // فاضي
+    password: ''   // فاضي
   })
   const [loading, setLoading] = useState(false)
-  const [errors, setErrors] = useState({})
 
   const handleChange = (e) => {
     const { name, value } = e.target
     setFormData(prev => ({ ...prev, [name]: value }))
-    if (errors[name]) {
-      setErrors(prev => ({ ...prev, [name]: '' }))
-    }
   }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    
+    if (!formData.username || !formData.password) {
+      toast.error('يرجى إدخال جميع البيانات')
+      return
+    }
+    
     setLoading(true)
     
-    console.log('🔐 محاولة تسجيل الدخول...')
-    console.log('📧 Email:', formData.email)
-    
     try {
-      // تسجيل الدخول المباشر
+      let email = formData.username
+      
+      // إذا كان المدخل ليس إيميل، ابحث عن الـ email بالـ username
+      if (!formData.username.includes('@')) {
+        const { data: userData, error: userError } = await supabase
+          .from('users')
+          .select('email')
+          .eq('username', formData.username)
+          .single()
+
+        if (userError || !userData) {
+          toast.error('اسم المستخدم أو كلمة المرور غير صحيحة')
+          setLoading(false)
+          return
+        }
+        
+        email = userData.email
+      }
+
+      // تسجيل الدخول
       const { data, error } = await supabase.auth.signInWithPassword({
-        email: formData.email,
+        email: email,
         password: formData.password,
       })
 
-      console.log('📊 Response Data:', data)
-      console.log('❌ Error:', error)
-
       if (error) {
-        console.error('🚫 خطأ في تسجيل الدخول:', error.message)
-        toast.error(`خطأ: ${error.message}`)
+        toast.error('اسم المستخدم أو كلمة المرور غير صحيحة')
         setLoading(false)
         return
       }
 
       if (data.user) {
-        console.log('✅ تم تسجيل الدخول بنجاح!')
-        console.log('👤 User:', data.user)
-        
         toast.success('تم تسجيل الدخول بنجاح')
-        
-        // الانتقال للـ Dashboard
-        setTimeout(() => {
-          router.push('/dashboard')
-          router.refresh()
-        }, 500)
+        router.push('/dashboard')
+        router.refresh()
       }
     } catch (error) {
-      console.error('💥 Exception:', error)
+      console.error('Login error:', error)
       toast.error('حدث خطأ غير متوقع')
     } finally {
       setLoading(false)
@@ -90,12 +97,12 @@ export default function LoginPage() {
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <Input
-              label="البريد الإلكتروني"
-              type="email"
-              name="email"
-              value={formData.email}
+              label="اسم المستخدم أو البريد الإلكتروني"
+              type="text"
+              name="username"
+              value={formData.username}
               onChange={handleChange}
-              placeholder="owner@alimarket.com"
+              placeholder="owner أو owner@alimarket.com"
               icon={<User size={20} />}
               required
             />
@@ -121,14 +128,6 @@ export default function LoginPage() {
               {loading ? 'جاري تسجيل الدخول...' : 'تسجيل الدخول'}
             </Button>
           </form>
-
-          {/* بيانات الدخول التجريبية */}
-          <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-            <p className="text-sm text-blue-800 text-center">
-              <strong>بيانات الدخول:</strong><br />
-              owner@alimarket.com / 123456
-            </p>
-          </div>
         </div>
 
         {/* Footer */}
