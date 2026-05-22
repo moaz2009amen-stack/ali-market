@@ -12,8 +12,8 @@ export default function LoginPage() {
   const supabase = createClient()
   
   const [formData, setFormData] = useState({
-    username: '',  // فاضي
-    password: ''   // فاضي
+    username: '',
+    password: ''
   })
   const [loading, setLoading] = useState(false)
 
@@ -26,35 +26,51 @@ export default function LoginPage() {
     e.preventDefault()
     
     if (!formData.username || !formData.password) {
-      toast.error('يرجى إدخال جميع البيانات')
+      toast.error('يرجى إدخال اسم المستخدم وكلمة المرور')
       return
     }
     
     setLoading(true)
     
     try {
-      let email = formData.username
-      
-      // إذا كان المدخل ليس إيميل، ابحث عن الـ email بالـ username
-      if (!formData.username.includes('@')) {
-        const { data: userData, error: userError } = await supabase
-          .from('users')
-          .select('email')
+      // البحث عن المستخدم أو المورد
+      let userData = null
+      let userType = null
+
+      // البحث في جدول المستخدمين
+      const { data: user, error: userError } = await supabase
+        .from('users')
+        .select('email, username, role')
+        .eq('username', formData.username)
+        .single()
+
+      if (user) {
+        userData = user
+        userType = 'user'
+      } else {
+        // البحث في جدول الموردين
+        const { data: supplier, error: supplierError } = await supabase
+          .from('suppliers')
+          .select('email, username, can_login')
           .eq('username', formData.username)
+          .eq('can_login', true)
           .single()
 
-        if (userError || !userData) {
-          toast.error('اسم المستخدم أو كلمة المرور غير صحيحة')
-          setLoading(false)
-          return
+        if (supplier) {
+          userData = supplier
+          userType = 'supplier'
         }
-        
-        email = userData.email
+      }
+
+      if (!userData) {
+        toast.error('اسم المستخدم أو كلمة المرور غير صحيحة')
+        setLoading(false)
+        return
       }
 
       // تسجيل الدخول
       const { data, error } = await supabase.auth.signInWithPassword({
-        email: email,
+        email: userData.email,
         password: formData.password,
       })
 
@@ -66,7 +82,12 @@ export default function LoginPage() {
 
       if (data.user) {
         toast.success('تم تسجيل الدخول بنجاح')
-        router.push('/dashboard')
+        
+        if (userType === 'supplier') {
+          router.push('/dashboard/supplier')
+        } else {
+          router.push('/dashboard')
+        }
         router.refresh()
       }
     } catch (error) {
@@ -80,7 +101,6 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-50 to-primary-100 px-4">
       <div className="w-full max-w-md">
-        {/* Logo & Title */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 bg-primary-600 rounded-2xl mb-4">
             <ShoppingBag className="text-white" size={32} />
@@ -89,7 +109,6 @@ export default function LoginPage() {
           <p className="text-gray-600">نظام إدارة المخزن والمبيعات</p>
         </div>
 
-        {/* Login Card */}
         <div className="bg-white rounded-2xl shadow-xl p-8">
           <h2 className="text-2xl font-bold text-gray-900 mb-6 text-center">
             تسجيل الدخول
@@ -97,12 +116,12 @@ export default function LoginPage() {
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <Input
-              label="اسم المستخدم أو البريد الإلكتروني"
+              label="اسم المستخدم"
               type="text"
               name="username"
               value={formData.username}
               onChange={handleChange}
-              placeholder="owner أو owner@alimarket.com"
+              placeholder="اسم المستخدم"
               icon={<User size={20} />}
               required
             />
@@ -130,7 +149,6 @@ export default function LoginPage() {
           </form>
         </div>
 
-        {/* Footer */}
         <p className="text-center text-gray-600 text-sm mt-6">
           © 2024 Ali Market. جميع الحقوق محفوظة
         </p>
