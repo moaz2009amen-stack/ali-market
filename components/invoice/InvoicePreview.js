@@ -30,7 +30,7 @@ export default function InvoicePreview({ invoice, onClose, onPrint }) {
         <div className="p-6 space-y-6">
           {/* Header Info */}
           <div className="text-center border-b border-gray-200 pb-6">
-            <h1 className="text-2xl font-bold text-primary-600 mb-2">Ali Market</h1>
+          <h1 className="text-2xl font-bold text-primary-600 mb-2">Ayman Market</h1>
             <p className="text-gray-600">نظام إدارة المخزن والمبيعات</p>
           </div>
 
