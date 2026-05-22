@@ -12,6 +12,7 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { Plus, Edit2, Trash2, Truck, Phone } from 'lucide-react'
 import { formatPhone } from '@/lib/utils/format'
 import toast from 'react-hot-toast'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
 
 export default function SuppliersPage() {
   const supabase = createClient()
