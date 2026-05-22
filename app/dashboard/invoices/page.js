@@ -12,6 +12,7 @@ import { Plus, Eye, FileText, DollarSign, TrendingUp, Edit2, Trash2, Calendar } 
 import { formatCurrency, formatDate } from '@/lib/utils/format'
 import { exportInvoicePDF, printThermalInvoice } from '@/lib/utils/exports'
 import toast from 'react-hot-toast'
+import InvoicePreview from '@/components/invoice/InvoicePreview'
 
 export default function InvoicesPage() {
   const router = useRouter()
@@ -22,6 +23,7 @@ export default function InvoicesPage() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [bulkDeleteModalOpen, setBulkDeleteModalOpen] = useState(false)
   const [deleteRange, setDeleteRange] = useState('')
+  const [previewInvoice, setPreviewInvoice] = useState(null)
 
   useEffect(() => {
     fetchInvoices()
@@ -86,7 +88,7 @@ export default function InvoicesPage() {
         items: items || []
       }
 
-      printThermalInvoice(fullInvoice)
+      setPreviewInvoice(fullInvoice)
     } catch (error) {
       console.error('Error loading invoice details:', error)
       toast.error('حدث خطأ في تحميل تفاصيل الفاتورة')
@@ -470,6 +472,17 @@ export default function InvoicesPage() {
           </div>
         </div>
       </Modal>
+
+      {previewInvoice && (
+        <InvoicePreview
+          invoice={previewInvoice}
+          onClose={() => setPreviewInvoice(null)}
+          onPrint={() => {
+            printThermalInvoice(previewInvoice)
+            setPreviewInvoice(null)
+          }}
+        />
+      )}
     </div>
   )
 }
