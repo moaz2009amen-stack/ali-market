@@ -12,8 +12,8 @@ export default function LoginPage() {
   const supabase = createClient()
   
   const [formData, setFormData] = useState({
-    username: '',
-    password: ''
+    email: 'owner@alimarket.com',  // قيمة افتراضية للتجربة
+    password: '123456'
   })
   const [loading, setLoading] = useState(false)
   const [errors, setErrors] = useState({})
@@ -26,71 +26,44 @@ export default function LoginPage() {
     }
   }
 
-  const validate = () => {
-    const newErrors = {}
-    
-    if (!formData.username) {
-      newErrors.username = 'اسم المستخدم أو البريد الإلكتروني مطلوب'
-    }
-    
-    if (!formData.password) {
-      newErrors.password = 'كلمة المرور مطلوبة'
-    } else if (formData.password.length < 6) {
-      newErrors.password = 'كلمة المرور يجب أن تكون 6 أحرف على الأقل'
-    }
-    
-    setErrors(newErrors)
-    return Object.keys(newErrors).length === 0
-  }
-
   const handleSubmit = async (e) => {
     e.preventDefault()
-    
-    if (!validate()) return
-    
     setLoading(true)
     
+    console.log('🔐 محاولة تسجيل الدخول...')
+    console.log('📧 Email:', formData.email)
+    
     try {
-      let email = formData.username
-      
-      // التحقق إذا كان المدخل username أو email
-      if (!formData.username.includes('@')) {
-        // البحث عن المستخدم بـ username
-        const { data: userData, error: userError } = await supabase
-          .from('users')
-          .select('email, username')
-          .eq('username', formData.username)
-          .single()
-
-        if (userError || !userData) {
-          toast.error('اسم المستخدم أو كلمة المرور غير صحيحة')
-          setLoading(false)
-          return
-        }
-        
-        email = userData.email
-      }
-
-      // تسجيل الدخول بالإيميل
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email: email,
+      // تسجيل الدخول المباشر
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: formData.email,
         password: formData.password,
       })
 
-      if (authError) {
-        console.error('Auth error:', authError)
-        toast.error('اسم المستخدم أو كلمة المرور غير صحيحة')
+      console.log('📊 Response Data:', data)
+      console.log('❌ Error:', error)
+
+      if (error) {
+        console.error('🚫 خطأ في تسجيل الدخول:', error.message)
+        toast.error(`خطأ: ${error.message}`)
         setLoading(false)
         return
       }
 
-      if (authData.user) {
+      if (data.user) {
+        console.log('✅ تم تسجيل الدخول بنجاح!')
+        console.log('👤 User:', data.user)
+        
         toast.success('تم تسجيل الدخول بنجاح')
-        router.push('/dashboard')
-        router.refresh()
+        
+        // الانتقال للـ Dashboard
+        setTimeout(() => {
+          router.push('/dashboard')
+          router.refresh()
+        }, 500)
       }
     } catch (error) {
-      console.error('Login error:', error)
+      console.error('💥 Exception:', error)
       toast.error('حدث خطأ غير متوقع')
     } finally {
       setLoading(false)
@@ -117,14 +90,13 @@ export default function LoginPage() {
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <Input
-              label="اسم المستخدم أو البريد الإلكتروني"
-              type="text"
-              name="username"
-              value={formData.username}
+              label="البريد الإلكتروني"
+              type="email"
+              name="email"
+              value={formData.email}
               onChange={handleChange}
-              placeholder="owner أو owner@alimarket.com"
+              placeholder="owner@alimarket.com"
               icon={<User size={20} />}
-              error={errors.username}
               required
             />
 
@@ -136,7 +108,6 @@ export default function LoginPage() {
               onChange={handleChange}
               placeholder="••••••••"
               icon={<Lock size={20} />}
-              error={errors.password}
               required
             />
 
@@ -150,6 +121,14 @@ export default function LoginPage() {
               {loading ? 'جاري تسجيل الدخول...' : 'تسجيل الدخول'}
             </Button>
           </form>
+
+          {/* بيانات الدخول التجريبية */}
+          <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <p className="text-sm text-blue-800 text-center">
+              <strong>بيانات الدخول:</strong><br />
+              owner@alimarket.com / 123456
+            </p>
+          </div>
         </div>
 
         {/* Footer */}
