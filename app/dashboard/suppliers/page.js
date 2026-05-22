@@ -8,8 +8,9 @@ import Modal from '@/components/ui/Modal'
 import Input from '@/components/ui/Input'
 import Badge from '@/components/ui/Badge'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import { Plus, Edit2, Trash2, Truck, DollarSign, Phone } from 'lucide-react'
-import { formatCurrency, formatPhone } from '@/lib/utils/format'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
+import { Plus, Edit2, Trash2, Truck, Phone } from 'lucide-react'
+import { formatPhone } from '@/lib/utils/format'
 import toast from 'react-hot-toast'
 
 export default function SuppliersPage() {
@@ -19,14 +20,11 @@ export default function SuppliersPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editMode, setEditMode] = useState(false)
   const [currentSupplier, setCurrentSupplier] = useState(null)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [supplierToDelete, setSupplierToDelete] = useState(null)
   const [formData, setFormData] = useState({
     name: '',
-    company_name: '',
     phone: '',
-    email: '',
-    address: '',
-    products_supplied: '',
-    payment_terms: '',
     username: '',
     supplier_password: '',
     can_login: false
@@ -74,7 +72,9 @@ export default function SuppliersPage() {
     
     if (formData.can_login) {
       if (!formData.username.trim()) newErrors.username = 'اسم المستخدم مطلوب'
-      if (!formData.supplier_password && !editMode) newErrors.supplier_password = 'كلمة المرور مطلوبة'
+      if (!formData.supplier_password && !editMode) {
+        newErrors.supplier_password = 'كلمة المرور مطلوبة'
+      }
     }
     
     setErrors(newErrors)
@@ -87,61 +87,66 @@ export default function SuppliersPage() {
     if (!validate()) return
 
     try {
-      const supplierData = {
-        name: formData.name,
-        company_name: formData.company_name,
-        phone: formData.phone,
-        address: formData.address,
-        products_supplied: formData.products_supplied,
-        payment_terms: formData.payment_terms,
-        username: formData.username || null,
-        can_login: formData.can_login
-      }
-
       if (editMode && currentSupplier) {
-        // تعديل مورد
+        // تعديل مورد موجود
+        const updateData = {
+          name: formData.name,
+          phone: formData.phone,
+          username: formData.can_login ? formData.username : null,
+          can_login: formData.can_login
+        }
+
         const { error } = await supabase
           .from('suppliers')
-          .update(supplierData)
+          .update(updateData)
           .eq('id', currentSupplier.id)
 
         if (error) throw error
-        
-        // تحديث الباسورد إذا تم إدخال واحد جديد
-        if (formData.can_login && formData.supplier_password && currentSupplier.email) {
-          await supabase.auth.updateUser({
-            password: formData.supplier_password
-          })
-        }
-        
         toast.success('تم تحديث المورد بنجاح')
       } else {
         // إضافة مورد جديد
         const { data: { user } } = await supabase.auth.getUser()
         
-        // إذا كان المورد يمكنه تسجيل الدخول، نحتاج إنشاء حساب له
-        let supplierEmail = formData.email || `${formData.username}@alimarket.supplier`
+        let supplierEmail = null
         
-        if (formData.can_login) {
-          // إنشاء المستخدم في Authentication
-          const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-            email: supplierEmail,
-            password: formData.supplier_password,
-            email_confirm: true
-          })
+        if (formData.can_login && formData.username && formData.supplier_password) {
+          // إنشاء email فريد للمورد
+          supplierEmail = `${formData.username}@aymanmarket.local`
+          
+          // محاولة إنشاء المستخدم
+          try {
+            const { data: authData, error: authError } = await supabase.auth.signUp({
+              email: supplierEmail,
+              password: formData.supplier_password,
+              options: {
+                data: {
+                  type: 'supplier',
+                  supplier_username: formData.username
+                }
+              }
+            })
 
-          if (authError) {
-            toast.error('حدث خطأ في إنشاء حساب المورد')
-            setLoading(false)
+            if (authError) {
+              console.error('Auth error:', authError)
+              throw new Error('فشل في إنشاء حساب المورد')
+            }
+          } catch (authError) {
+            console.error('Signup error:', authError)
+            toast.error('حدث خطأ في إنشاء حساب تسجيل الدخول للمورد')
             return
           }
-          
-          supplierData.email = supplierEmail
         }
         
         const { error } = await supabase
           .from('suppliers')
-          .insert([{ ...supplierData, created_by: user.id }])
+          .insert([{
+            name: formData.name,
+            phone: formData.phone,
+            username: formData.can_login ? formData.username : null,
+            email: supplierEmail,
+            can_login: formData.can_login,
+            created_by: user.id
+          }])
 
         if (error) throw error
         toast.success('تم إضافة المورد بنجاح')
@@ -151,7 +156,7 @@ export default function SuppliersPage() {
       closeModal()
     } catch (error) {
       console.error('Error saving supplier:', error)
-      if (error.message.includes('duplicate key')) {
+      if (error.message?.includes('duplicate key') || error.message?.includes('unique')) {
         toast.error('اسم المستخدم موجود مسبقاً')
       } else {
         toast.error('حدث خطأ في حفظ المورد')
@@ -163,32 +168,34 @@ export default function SuppliersPage() {
     setCurrentSupplier(supplier)
     setFormData({
       name: supplier.name,
-      company_name: supplier.company_name || '',
       phone: supplier.phone,
-      email: supplier.email || '',
-      address: supplier.address || '',
-      products_supplied: supplier.products_supplied || '',
-      payment_terms: supplier.payment_terms || '',
       username: supplier.username || '',
-      supplier_password: '', // لا نعرض الباسورد القديم
+      supplier_password: '',
       can_login: supplier.can_login || false
     })
     setEditMode(true)
     setModalOpen(true)
   }
 
-  const handleDelete = async (supplier) => {
-    if (!confirm(`هل أنت متأكد من حذف المورد "${supplier.name}"؟`)) return
+  const handleDelete = (supplier) => {
+    setSupplierToDelete(supplier)
+    setDeleteConfirmOpen(true)
+  }
+
+  const confirmDelete = async () => {
+    if (!supplierToDelete) return
 
     try {
       const { error } = await supabase
         .from('suppliers')
         .delete()
-        .eq('id', supplier.id)
+        .eq('id', supplierToDelete.id)
 
       if (error) throw error
       
       toast.success('تم حذف المورد بنجاح')
+      setDeleteConfirmOpen(false)
+      setSupplierToDelete(null)
       fetchSuppliers()
     } catch (error) {
       console.error('Error deleting supplier:', error)
@@ -201,12 +208,7 @@ export default function SuppliersPage() {
     setCurrentSupplier(null)
     setFormData({
       name: '',
-      company_name: '',
       phone: '',
-      email: '',
-      address: '',
-      products_supplied: '',
-      payment_terms: '',
       username: '',
       supplier_password: '',
       can_login: false
@@ -229,7 +231,6 @@ export default function SuppliersPage() {
       render: (row) => (
         <div>
           <p className="font-semibold text-gray-900">{row.name}</p>
-          {row.company_name && <p className="text-sm text-gray-500">{row.company_name}</p>}
           {row.username && <p className="text-xs text-primary-600">@{row.username}</p>}
         </div>
       )
@@ -245,25 +246,11 @@ export default function SuppliersPage() {
       )
     },
     { 
-      header: 'المنتجات', 
-      accessor: 'products_supplied',
-      render: (row) => row.products_supplied || '-'
-    },
-    { 
-      header: 'الديون', 
-      accessor: 'total_debt',
-      render: (row) => (
-        <span className={row.total_debt > 0 ? 'text-danger-600 font-semibold' : 'text-gray-900'}>
-          {formatCurrency(row.total_debt || 0)}
-        </span>
-      )
-    },
-    { 
       header: 'الحالة', 
-      accessor: 'is_active',
+      accessor: 'can_login',
       render: (row) => (
-        <Badge variant={row.is_active ? 'success' : 'default'}>
-          {row.is_active ? 'نشط' : 'موقوف'}
+        <Badge variant={row.can_login ? 'success' : 'default'}>
+          {row.can_login ? 'يمكنه الدخول' : 'لا يمكنه الدخول'}
         </Badge>
       )
     },
@@ -289,12 +276,6 @@ export default function SuppliersPage() {
     },
   ]
 
-  const stats = {
-    total: suppliers.length,
-    active: suppliers.filter(s => s.is_active).length,
-    totalDebt: suppliers.reduce((sum, s) => sum + (s.total_debt || 0), 0)
-  }
-
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -305,13 +286,12 @@ export default function SuppliersPage() {
 
   return (
     <div className="space-y-6">
-      {/* إحصائيات */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Card padding={false} className="p-6">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-600">إجمالي الموردين</p>
-              <p className="text-2xl font-bold text-gray-900">{stats.total}</p>
+              <p className="text-2xl font-bold text-gray-900">{suppliers.length}</p>
             </div>
             <div className="w-12 h-12 bg-primary-100 rounded-lg flex items-center justify-center">
               <Truck className="text-primary-600" size={24} />
@@ -323,28 +303,17 @@ export default function SuppliersPage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-600">موردين نشطين</p>
-              <p className="text-2xl font-bold text-success-600">{stats.active}</p>
+              <p className="text-2xl font-bold text-success-600">
+                {suppliers.filter(s => s.can_login).length}
+              </p>
             </div>
             <div className="w-12 h-12 bg-success-100 rounded-lg flex items-center justify-center">
               <Truck className="text-success-600" size={24} />
             </div>
           </div>
         </Card>
-
-        <Card padding={false} className="p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">ديون للموردين</p>
-              <p className="text-2xl font-bold text-danger-600">{formatCurrency(stats.totalDebt)}</p>
-            </div>
-            <div className="w-12 h-12 bg-danger-100 rounded-lg flex items-center justify-center">
-              <DollarSign className="text-danger-600" size={24} />
-            </div>
-          </div>
-        </Card>
       </div>
 
-      {/* جدول الموردين */}
       <Card 
         title="الموردين"
         action={
@@ -362,79 +331,35 @@ export default function SuppliersPage() {
         />
       </Card>
 
-      {/* Modal */}
+      {/* Modal إضافة/تعديل */}
       <Modal
         isOpen={modalOpen}
         onClose={closeModal}
         title={editMode ? 'تعديل مورد' : 'إضافة مورد جديد'}
-        size="lg"
+        size="md"
       >
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Input
-              label="اسم المورد"
-              name="name"
-              value={formData.name}
-              onChange={handleChange}
-              placeholder="أحمد محمود"
-              required
-              error={errors.name}
-            />
-
-            <Input
-              label="اسم الشركة (اختياري)"
-              name="company_name"
-              value={formData.company_name}
-              onChange={handleChange}
-              placeholder="شركة التوزيع الحديثة"
-            />
-
-            <Input
-              label="رقم الهاتف"
-              type="tel"
-              name="phone"
-              value={formData.phone}
-              onChange={handleChange}
-              placeholder="01001234567"
-              required
-              error={errors.phone}
-            />
-
-            <Input
-              label="البريد الإلكتروني (اختياري)"
-              type="email"
-              name="email"
-              value={formData.email}
-              onChange={handleChange}
-              placeholder="supplier@example.com"
-            />
-          </div>
-
           <Input
-            label="العنوان (اختياري)"
-            name="address"
-            value={formData.address}
+            label="اسم المورد"
+            name="name"
+            value={formData.name}
             onChange={handleChange}
-            placeholder="القاهرة، مصر"
+            placeholder="اسم المورد"
+            required
+            error={errors.name}
           />
 
           <Input
-            label="المنتجات المورّدة (اختياري)"
-            name="products_supplied"
-            value={formData.products_supplied}
+            label="رقم الهاتف"
+            type="tel"
+            name="phone"
+            value={formData.phone}
             onChange={handleChange}
-            placeholder="شيبسي، مشروبات غازية، حلويات"
+            placeholder="01001234567"
+            required
+            error={errors.phone}
           />
 
-          <Input
-            label="شروط الدفع (اختياري)"
-            name="payment_terms"
-            value={formData.payment_terms}
-            onChange={handleChange}
-            placeholder="الدفع خلال 30 يوم"
-          />
-
-          {/* بيانات تسجيل الدخول */}
           <div className="border-t border-gray-200 pt-4">
             <div className="flex items-center gap-2 mb-4">
               <input
@@ -451,7 +376,7 @@ export default function SuppliersPage() {
             </div>
 
             {formData.can_login && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+              <div className="space-y-4">
                 <Input
                   label="اسم المستخدم"
                   name="username"
@@ -486,6 +411,19 @@ export default function SuppliersPage() {
           </div>
         </form>
       </Modal>
+
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        isOpen={deleteConfirmOpen}
+        onClose={() => {
+          setDeleteConfirmOpen(false)
+          setSupplierToDelete(null)
+        }}
+        onConfirm={confirmDelete}
+        title="حذف المورد"
+        message={`هل أنت متأكد من حذف المورد "${supplierToDelete?.name}"؟`}
+        confirmText="حذف المورد"
+      />
     </div>
   )
 }
