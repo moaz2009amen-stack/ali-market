@@ -11,6 +11,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { Plus, Edit2, Trash2, Users, DollarSign, Phone } from 'lucide-react'
 import { formatCurrency, formatPhone } from '@/lib/utils/format'
 import toast from 'react-hot-toast'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
 
 export default function CustomersPage() {
   const supabase = createClient()
@@ -19,6 +20,8 @@ export default function CustomersPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editMode, setEditMode] = useState(false)
   const [currentCustomer, setCurrentCustomer] = useState(null)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [customerToDelete, setCustomerToDelete] = useState(null)
   const [formData, setFormData] = useState({
     name: '',
     shop_name: '',
@@ -127,18 +130,25 @@ export default function CustomersPage() {
     setModalOpen(true)
   }
 
-  const handleDelete = async (customer) => {
-    if (!confirm(`هل أنت متأكد من حذف العميل "${customer.name}"؟`)) return
+  const handleDelete = (customer) => {
+    setCustomerToDelete(customer)
+    setDeleteConfirmOpen(true)
+  }
+
+  const confirmDelete = async () => {
+    if (!customerToDelete) return
 
     try {
       const { error } = await supabase
         .from('customers')
         .delete()
-        .eq('id', customer.id)
+        .eq('id', customerToDelete.id)
 
       if (error) throw error
       
       toast.success('تم حذف العميل بنجاح')
+      setDeleteConfirmOpen(false)
+      setCustomerToDelete(null)
       fetchCustomers()
     } catch (error) {
       console.error('Error deleting customer:', error)
@@ -381,6 +391,18 @@ export default function CustomersPage() {
           </div>
         </form>
       </Modal>
+
+      <ConfirmDialog
+        isOpen={deleteConfirmOpen}
+        onClose={() => {
+          setDeleteConfirmOpen(false)
+          setCustomerToDelete(null)
+        }}
+        onConfirm={confirmDelete}
+        title="حذف العميل"
+        message={`هل أنت متأكد من حذف العميل "${customerToDelete?.name}"؟`}
+        confirmText="حذف العميل"
+      />
     </div>
   )
 }
