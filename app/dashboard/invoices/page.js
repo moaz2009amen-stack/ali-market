@@ -27,6 +27,7 @@ export default function InvoicesPage() {
   const [previewInvoice, setPreviewInvoice] = useState(null)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [invoiceToDelete, setInvoiceToDelete] = useState(null)
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false)
 
   useEffect(() => {
     fetchInvoices()
@@ -149,6 +150,10 @@ export default function InvoicesPage() {
       return
     }
 
+    setBulkDeleteConfirmOpen(true)
+  }
+
+  const confirmBulkDelete = async () => {
     const now = new Date()
     let startDate
 
@@ -169,17 +174,6 @@ export default function InvoicesPage() {
         return
     }
 
-    const rangeNames = {
-      day: 'يوم',
-      week: 'أسبوع',
-      month: 'شهر',
-      year: 'سنة'
-    }
-
-    if (!confirm(`هل أنت متأكد من حذف جميع الفواتير خلال ${rangeNames[deleteRange]} الماضي؟ لا يمكن التراجع عن هذا الإجراء.`)) {
-      return
-    }
-
     try {
       // جلب الفواتير في الفترة المحددة
       const { data: invoicesToDelete, error: fetchError } = await supabase
@@ -192,6 +186,7 @@ export default function InvoicesPage() {
       if (!invoicesToDelete || invoicesToDelete.length === 0) {
         toast.info('لا توجد فواتير في هذه الفترة')
         setBulkDeleteModalOpen(false)
+        setBulkDeleteConfirmOpen(false)
         return
       }
 
@@ -215,11 +210,19 @@ export default function InvoicesPage() {
       toast.success(`تم حذف ${invoicesToDelete.length} فاتورة بنجاح`)
       setBulkDeleteModalOpen(false)
       setDeleteRange('')
+      setBulkDeleteConfirmOpen(false)
       fetchInvoices()
     } catch (error) {
       console.error('Error bulk deleting invoices:', error)
       toast.error('حدث خطأ في حذف الفواتير')
     }
+  }
+
+  const rangeNames = {
+    day: 'يوم',
+    week: 'أسبوع',
+    month: 'شهر',
+    year: 'سنة'
   }
 
   const columns = [
@@ -502,6 +505,17 @@ export default function InvoicesPage() {
         title="حذف الفاتورة"
         message={`هل أنت متأكد من حذف الفاتورة #${invoiceToDelete?.invoice_number}؟ سيتم حذف جميع البيانات المرتبطة بها.`}
         confirmText="حذف الفاتورة"
+      />
+
+      <ConfirmDialog
+        isOpen={bulkDeleteConfirmOpen}
+        onClose={() => {
+          setBulkDeleteConfirmOpen(false)
+        }}
+        onConfirm={confirmBulkDelete}
+        title="حذف الفواتير بالفترة"
+        message={`هل أنت متأكد من حذف جميع الفواتير خلال ${rangeNames[deleteRange]} الماضي؟ لا يمكن التراجع عن هذا الإجراء.`}
+        confirmText="حذف الفواتير"
       />
     </div>
   )
