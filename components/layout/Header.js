@@ -1,13 +1,38 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Menu, Bell, Search, X } from 'lucide-react'
 import Input from '@/components/ui/Input'
+import { createClient } from '@/lib/supabase/client'
 
 export default function Header({ onMenuClick, title = 'الرئيسية' }) {
   const router = useRouter()
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [unreadCount, setUnreadCount] = useState(0)
+
+  useEffect(() => {
+    checkUnreadNotifications()
+  }, [])
+
+  async function checkUnreadNotifications() {
+    try {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      
+      if (user) {
+        const { count } = await supabase
+          .from('notifications')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', user.id)
+          .eq('is_read', false)
+        
+        setUnreadCount(count || 0)
+      }
+    } catch (error) {
+      console.error('Error checking notifications:', error)
+    }
+  }
 
   const handleSearch = (e) => {
     e.preventDefault()
@@ -67,7 +92,9 @@ export default function Header({ onMenuClick, title = 'الرئيسية' }) {
             className="relative p-2 hover:bg-gray-100 rounded-lg transition-colors"
           >
             <Bell size={20} className="text-gray-600" />
-            <span className="absolute top-1 left-1 w-2 h-2 bg-danger-500 rounded-full"></span>
+            {unreadCount > 0 && (
+              <span className="absolute top-1 left-1 w-2 h-2 bg-danger-500 rounded-full"></span>
+            )}
           </button>
 
           {/* User Avatar (Desktop) */}
