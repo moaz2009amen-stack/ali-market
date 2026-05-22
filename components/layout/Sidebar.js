@@ -125,7 +125,7 @@ export default function Sidebar({ isOpen, onClose, userRole }) {
               <ShoppingBag className="text-white" size={24} />
             </div>
             <div>
-              <h1 className="text-lg font-bold text-gray-900">Ali Market</h1>
+            <h1 className="text-lg font-bold text-gray-900">Ayman Market</h1>
               <p className="text-xs text-gray-500">نظام الإدارة</p>
             </div>
           </div>
