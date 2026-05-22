@@ -26,10 +26,44 @@ export default function NewInvoicePage() {
   const [invoiceItems, setInvoiceItems] = useState([])
   const [paidAmount, setPaidAmount] = useState('')
   const [notes, setNotes] = useState('')
+  const [draftSaved, setDraftSaved] = useState(false)
 
   useEffect(() => {
     fetchInitialData()
   }, [])
+
+  // تحميل المسودة عند الدخول
+  useEffect(() => {
+    const savedDraft = localStorage.getItem('invoice_draft')
+    if (savedDraft) {
+      try {
+        const draft = JSON.parse(savedDraft)
+        
+        if (confirm('تم العثور على مسودة محفوظة. هل تريد استكمالها؟')) {
+          setSelectedCustomer(draft.customer_id)
+          setInvoiceItems(draft.items)
+          setPaidAmount(draft.paid_amount)
+          setNotes(draft.notes)
+          toast.success('تم تحميل المسودة')
+        } else {
+          localStorage.removeItem('invoice_draft')
+        }
+      } catch (error) {
+        console.error('Error loading draft:', error)
+      }
+    }
+  }, [])
+
+  // Auto Save كل 30 ثانية
+  useEffect(() => {
+    const autoSave = setInterval(() => {
+      if (invoiceItems.length > 0 && selectedCustomer) {
+        saveDraft()
+      }
+    }, 30000) // كل 30 ثانية
+
+    return () => clearInterval(autoSave)
+  }, [invoiceItems, selectedCustomer, paidAmount, notes])
 
   async function fetchInitialData() {
     try {
@@ -59,6 +93,26 @@ export default function NewInvoicePage() {
       toast.error('حدث خطأ في تحميل البيانات')
     } finally {
       setLoading(false)
+    }
+  }
+
+  // دالة حفظ المسودة
+  const saveDraft = () => {
+    try {
+      const draft = {
+        customer_id: selectedCustomer,
+        items: invoiceItems,
+        paid_amount: paidAmount,
+        notes: notes,
+        saved_at: new Date().toISOString()
+      }
+      
+      localStorage.setItem('invoice_draft', JSON.stringify(draft))
+      setDraftSaved(true)
+      
+      setTimeout(() => setDraftSaved(false), 2000)
+    } catch (error) {
+      console.error('Error saving draft:', error)
     }
   }
 
@@ -225,6 +279,9 @@ export default function NewInvoicePage() {
         
         if (paymentError) throw paymentError
       }
+      
+      // حذف المسودة بعد الحفظ الناجح
+      localStorage.removeItem('invoice_draft')
       
       toast.success('تم حفظ الفاتورة بنجاح')
       
@@ -415,6 +472,12 @@ export default function NewInvoicePage() {
           </div>
         </div>
       </Card>
+
+      {draftSaved && (
+        <div className="fixed bottom-4 left-4 bg-success-500 text-white px-4 py-2 rounded-lg shadow-lg">
+          ✓ تم الحفظ تلقائياً
+        </div>
+      )}
     </div>
   )
 }
