@@ -30,7 +30,7 @@ export default function LoginPage() {
     const newErrors = {}
     
     if (!formData.username) {
-      newErrors.username = 'اسم المستخدم مطلوب'
+      newErrors.username = 'اسم المستخدم أو البريد الإلكتروني مطلوب'
     }
     
     if (!formData.password) {
@@ -51,26 +51,36 @@ export default function LoginPage() {
     setLoading(true)
     
     try {
-      // البحث عن المستخدم بـ username
-      const { data: userData, error: userError } = await supabase
-        .from('users')
-        .select('id, email, password_hash')
-        .eq('username', formData.username)
-        .single()
+      let email = formData.username
+      
+      // التحقق إذا كان المدخل username أو email
+      if (!formData.username.includes('@')) {
+        // البحث عن المستخدم بـ username
+        const { data: userData, error: userError } = await supabase
+          .from('users')
+          .select('email, username')
+          .eq('username', formData.username)
+          .single()
 
-      if (userError || !userData) {
-        toast.error('اسم المستخدم أو كلمة المرور غير صحيحة')
-        return
+        if (userError || !userData) {
+          toast.error('اسم المستخدم أو كلمة المرور غير صحيحة')
+          setLoading(false)
+          return
+        }
+        
+        email = userData.email
       }
 
-      // التحقق من كلمة المرور
+      // تسجيل الدخول بالإيميل
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email: userData.email,
+        email: email,
         password: formData.password,
       })
 
       if (authError) {
+        console.error('Auth error:', authError)
         toast.error('اسم المستخدم أو كلمة المرور غير صحيحة')
+        setLoading(false)
         return
       }
 
@@ -107,12 +117,12 @@ export default function LoginPage() {
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <Input
-              label="اسم المستخدم"
+              label="اسم المستخدم أو البريد الإلكتروني"
               type="text"
               name="username"
               value={formData.username}
               onChange={handleChange}
-              placeholder="اسم المستخدم"
+              placeholder="owner أو owner@alimarket.com"
               icon={<User size={20} />}
               error={errors.username}
               required
