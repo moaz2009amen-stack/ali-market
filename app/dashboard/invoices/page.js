@@ -5,9 +5,10 @@ import { createClient } from '@/lib/supabase/client'
 import Card from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
 import Table from '@/components/ui/Table'
+import Modal from '@/components/ui/Modal'
 import Badge from '@/components/ui/Badge'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import { Plus, Eye, FileText, DollarSign, TrendingUp } from 'lucide-react'
+import { Plus, Eye, FileText, DollarSign, TrendingUp, Edit2, Trash2, Calendar } from 'lucide-react'
 import { formatCurrency, formatDate } from '@/lib/utils/format'
 import { exportInvoicePDF, printThermalInvoice } from '@/lib/utils/exports'
 import toast from 'react-hot-toast'
@@ -17,10 +18,31 @@ export default function InvoicesPage() {
   const supabase = createClient()
   const [invoices, setInvoices] = useState([])
   const [loading, setLoading] = useState(true)
+  const [userRole, setUserRole] = useState('')
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false)
+  const [bulkDeleteModalOpen, setBulkDeleteModalOpen] = useState(false)
+  const [deleteRange, setDeleteRange] = useState('')
 
   useEffect(() => {
     fetchInvoices()
+    checkUserRole()
   }, [])
+
+  async function checkUserRole() {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        const { data } = await supabase
+          .from('users')
+          .select('role')
+          .eq('id', user.id)
+          .single()
+        setUserRole(data?.role || 'employee')
+      }
+    } catch (error) {
+      console.error('Error fetching user role:', error)
+    }
+  }
 
   async function fetchInvoices() {
     try {
@@ -51,7 +73,6 @@ export default function InvoicesPage() {
   }
 
   const handleViewInvoice = async (invoice) => {
-    // جلب تفاصيل الفاتورة كاملة
     try {
       const { data: items, error } = await supabase
         .from('invoice_items')
@@ -65,11 +86,129 @@ export default function InvoicesPage() {
         items: items || []
       }
 
-      // طباعة أو عرض
       printThermalInvoice(fullInvoice)
     } catch (error) {
       console.error('Error loading invoice details:', error)
       toast.error('حدث خطأ في تحميل تفاصيل الفاتورة')
+    }
+  }
+
+  const handleDeleteInvoice = async (invoiceId) => {
+    if (userRole !== 'owner') {
+      toast.error('غير مصرح لك بحذف الفواتير')
+      return
+    }
+
+    if (!confirm('هل أنت متأكد من حذف هذه الفاتورة؟ لا يمكن التراجع عن هذا الإجراء.')) {
+      return
+    }
+
+    try {
+      // حذف بنود الفاتورة أولاً
+      const { error: itemsError } = await supabase
+        .from('invoice_items')
+        .delete()
+        .eq('invoice_id', invoiceId)
+
+      if (itemsError) throw itemsError
+
+      // حذف الفاتورة
+      const { error: invoiceError } = await supabase
+        .from('invoices')
+        .delete()
+        .eq('id', invoiceId)
+
+      if (invoiceError) throw invoiceError
+
+      toast.success('تم حذف الفاتورة بنجاح')
+      fetchInvoices()
+    } catch (error) {
+      console.error('Error deleting invoice:', error)
+      toast.error('حدث خطأ في حذف الفاتورة')
+    }
+  }
+
+  const handleBulkDelete = async () => {
+    if (userRole !== 'owner') {
+      toast.error('غير مصرح لك بحذف الفواتير')
+      return
+    }
+
+    if (!deleteRange) {
+      toast.error('يرجى اختيار الفترة الزمنية')
+      return
+    }
+
+    const now = new Date()
+    let startDate
+
+    switch(deleteRange) {
+      case 'day':
+        startDate = new Date(now.setDate(now.getDate() - 1))
+        break
+      case 'week':
+        startDate = new Date(now.setDate(now.getDate() - 7))
+        break
+      case 'month':
+        startDate = new Date(now.setMonth(now.getMonth() - 1))
+        break
+      case 'year':
+        startDate = new Date(now.setFullYear(now.getFullYear() - 1))
+        break
+      default:
+        return
+    }
+
+    const rangeNames = {
+      day: 'يوم',
+      week: 'أسبوع',
+      month: 'شهر',
+      year: 'سنة'
+    }
+
+    if (!confirm(`هل أنت متأكد من حذف جميع الفواتير خلال ${rangeNames[deleteRange]} الماضي؟ لا يمكن التراجع عن هذا الإجراء.`)) {
+      return
+    }
+
+    try {
+      // جلب الفواتير في الفترة المحددة
+      const { data: invoicesToDelete, error: fetchError } = await supabase
+        .from('invoices')
+        .select('id')
+        .gte('created_at', startDate.toISOString())
+
+      if (fetchError) throw fetchError
+
+      if (!invoicesToDelete || invoicesToDelete.length === 0) {
+        toast.info('لا توجد فواتير في هذه الفترة')
+        setBulkDeleteModalOpen(false)
+        return
+      }
+
+      // حذف بنود الفواتير
+      const invoiceIds = invoicesToDelete.map(inv => inv.id)
+      const { error: itemsError } = await supabase
+        .from('invoice_items')
+        .delete()
+        .in('invoice_id', invoiceIds)
+
+      if (itemsError) throw itemsError
+
+      // حذف الفواتير
+      const { error: invoicesError } = await supabase
+        .from('invoices')
+        .delete()
+        .in('id', invoiceIds)
+
+      if (invoicesError) throw invoicesError
+
+      toast.success(`تم حذف ${invoicesToDelete.length} فاتورة بنجاح`)
+      setBulkDeleteModalOpen(false)
+      setDeleteRange('')
+      fetchInvoices()
+    } catch (error) {
+      console.error('Error bulk deleting invoices:', error)
+      toast.error('حدث خطأ في حذف الفواتير')
     }
   }
 
@@ -139,12 +278,35 @@ export default function InvoicesPage() {
       header: 'إجراءات', 
       accessor: 'actions',
       render: (row) => (
-        <button
-          onClick={() => handleViewInvoice(row)}
-          className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
-        >
-          <Eye size={18} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => handleViewInvoice(row)}
+            className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+            title="عرض وطباعة"
+          >
+            <Eye size={18} />
+          </button>
+          
+          {userRole === 'owner' && (
+            <>
+              <button
+                onClick={() => router.push(`/dashboard/invoices/${row.id}/edit`)}
+                className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                title="تعديل"
+              >
+                <Edit2 size={18} />
+              </button>
+              
+              <button
+                onClick={() => handleDeleteInvoice(row.id)}
+                className="p-2 text-danger-600 hover:bg-danger-50 rounded-lg transition-colors"
+                title="حذف"
+              >
+                <Trash2 size={18} />
+              </button>
+            </>
+          )}
+        </div>
       )
     },
   ]
@@ -221,13 +383,26 @@ export default function InvoicesPage() {
       <Card 
         title="الفواتير"
         action={
-          <Button 
-            onClick={() => router.push('/dashboard/invoices/new')}
-            size="md"
-          >
-            <Plus size={20} />
-            فاتورة جديدة
-          </Button>
+          <div className="flex gap-2">
+            {userRole === 'owner' && (
+              <Button 
+                onClick={() => setBulkDeleteModalOpen(true)}
+                variant="danger"
+                size="sm"
+              >
+                <Calendar size={18} />
+                حذف بالفترة
+              </Button>
+            )}
+            
+            <Button 
+              onClick={() => router.push('/dashboard/invoices/new')}
+              size="md"
+            >
+              <Plus size={20} />
+              فاتورة جديدة
+            </Button>
+          </div>
         }
       >
         <Table
@@ -237,6 +412,64 @@ export default function InvoicesPage() {
           emptyMessage="لا توجد فواتير. ابدأ بإنشاء فاتورة جديدة!"
         />
       </Card>
+
+      {/* Modal حذف بالفترة */}
+      <Modal
+        isOpen={bulkDeleteModalOpen}
+        onClose={() => {
+          setBulkDeleteModalOpen(false)
+          setDeleteRange('')
+        }}
+        title="حذف الفواتير بالفترة الزمنية"
+        size="md"
+      >
+        <div className="space-y-4">
+          <p className="text-gray-600">اختر الفترة الزمنية لحذف جميع الفواتير خلالها:</p>
+          
+          <div className="space-y-2">
+            {[
+              { value: 'day', label: 'آخر يوم' },
+              { value: 'week', label: 'آخر أسبوع' },
+              { value: 'month', label: 'آخر شهر' },
+              { value: 'year', label: 'آخر سنة' }
+            ].map(option => (
+              <label key={option.value} className="flex items-center gap-3 p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50">
+                <input
+                  type="radio"
+                  name="deleteRange"
+                  value={option.value}
+                  checked={deleteRange === option.value}
+                  onChange={(e) => setDeleteRange(e.target.value)}
+                  className="w-4 h-4 text-primary-600"
+                />
+                <span className="text-gray-900">{option.label}</span>
+              </label>
+            ))}
+          </div>
+
+          <div className="flex gap-3 pt-4">
+            <Button 
+              onClick={handleBulkDelete}
+              variant="danger"
+              fullWidth
+              disabled={!deleteRange}
+            >
+              <Trash2 size={18} />
+              حذف الفواتير
+            </Button>
+            <Button 
+              onClick={() => {
+                setBulkDeleteModalOpen(false)
+                setDeleteRange('')
+              }}
+              variant="secondary"
+              fullWidth
+            >
+              إلغاء
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }
