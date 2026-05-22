@@ -12,6 +12,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { Plus, Edit2, Trash2, Package, AlertTriangle } from 'lucide-react'
 import { formatCurrency, formatNumber } from '@/lib/utils/format'
 import toast from 'react-hot-toast'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
 
 export default function ProductsPage() {
   const supabase = createClient()
@@ -20,6 +21,8 @@ export default function ProductsPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editMode, setEditMode] = useState(false)
   const [currentProduct, setCurrentProduct] = useState(null)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [productToDelete, setProductToDelete] = useState(null)
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -157,18 +160,25 @@ export default function ProductsPage() {
     setModalOpen(true)
   }
 
-  const handleDelete = async (product) => {
-    if (!confirm(`هل أنت متأكد من حذف المنتج "${product.name}"؟`)) return
+  const handleDelete = (product) => {
+    setProductToDelete(product)
+    setDeleteConfirmOpen(true)
+  }
+
+  const confirmDelete = async () => {
+    if (!productToDelete) return
 
     try {
       const { error } = await supabase
         .from('products')
         .delete()
-        .eq('id', product.id)
+        .eq('id', productToDelete.id)
 
       if (error) throw error
       
       toast.success('تم حذف المنتج بنجاح')
+      setDeleteConfirmOpen(false)
+      setProductToDelete(null)
       fetchProducts()
     } catch (error) {
       console.error('Error deleting product:', error)
@@ -462,6 +472,18 @@ export default function ProductsPage() {
           </div>
         </form>
       </Modal>
+
+      <ConfirmDialog
+        isOpen={deleteConfirmOpen}
+        onClose={() => {
+          setDeleteConfirmOpen(false)
+          setProductToDelete(null)
+        }}
+        onConfirm={confirmDelete}
+        title="حذف المنتج"
+        message={`هل أنت متأكد من حذف المنتج "${productToDelete?.name}"؟`}
+        confirmText="حذف المنتج"
+      />
     </div>
   )
 }
