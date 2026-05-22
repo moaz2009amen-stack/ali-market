@@ -1,9 +1,9 @@
 import Link from 'next/link'
 import { formatCurrency, formatDate } from '@/lib/utils/format'
 import Badge from '@/components/ui/Badge'
-import { Eye } from 'lucide-react'
+import { Eye, Printer } from 'lucide-react'
 
-export default function RecentInvoices({ invoices = [] }) {
+export default function RecentInvoices({ invoices = [], onView }) {
   if (invoices.length === 0) {
     return (
       <div className="text-center py-12">
@@ -44,16 +44,24 @@ export default function RecentInvoices({ invoices = [] }) {
                 {formatCurrency(invoice.total_amount)}
               </span>
               
-              <Link
-                href={`/dashboard/invoices/${invoice.id}`}
-                className="text-primary-600 hover:text-primary-700 transition-colors"
+              <button
+                onClick={() => onView && onView(invoice)}
+                className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                title="معاينة"
               >
                 <Eye size={18} />
-              </Link>
+              </button>
             </div>
           </div>
         </div>
       ))}
+      
+      <Link
+        href="/dashboard/invoices"
+        className="block text-center text-primary-600 hover:text-primary-700 font-medium mt-4"
+      >
+        عرض جميع الفواتير ←
+      </Link>
     </div>
   )
 }
