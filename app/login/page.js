@@ -33,63 +33,62 @@ export default function LoginPage() {
     setLoading(true)
     
     try {
-      // البحث عن المستخدم أو المورد
-      let userData = null
-      let userType = null
-
       // البحث في جدول المستخدمين
       const { data: user, error: userError } = await supabase
         .from('users')
-        .select('email, username, role')
+        .select('email')
         .eq('username', formData.username)
         .single()
 
-      if (user) {
-        userData = user
-        userType = 'user'
-      } else {
+      if (!user) {
         // البحث في جدول الموردين
         const { data: supplier, error: supplierError } = await supabase
           .from('suppliers')
-          .select('email, username, can_login')
+          .select('email')
           .eq('username', formData.username)
           .eq('can_login', true)
           .single()
 
-        if (supplier) {
-          userData = supplier
-          userType = 'supplier'
+        if (!supplier) {
+          toast.error('اسم المستخدم أو كلمة المرور غير صحيحة')
+          setLoading(false)
+          return
         }
-      }
+        
+        // تسجيل دخول المورد
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: supplier.email,
+          password: formData.password,
+        })
 
-      if (!userData) {
-        toast.error('اسم المستخدم أو كلمة المرور غير صحيحة')
-        setLoading(false)
+        if (error) {
+          toast.error('كلمة المرور غير صحيحة')
+          setLoading(false)
+          return
+        }
+
+        toast.success('تم تسجيل الدخول بنجاح')
+        router.push('/dashboard')
+        router.refresh()
         return
       }
 
-      // تسجيل الدخول
+      // تسجيل دخول المستخدم
       const { data, error } = await supabase.auth.signInWithPassword({
-        email: userData.email,
+        email: user.email,
         password: formData.password,
       })
 
       if (error) {
-        toast.error('اسم المستخدم أو كلمة المرور غير صحيحة')
+        toast.error('كلمة المرور غير صحيحة')
         setLoading(false)
         return
       }
 
-      if (data.user) {
-        toast.success('تم تسجيل الدخول بنجاح')
-        
-        if (userType === 'supplier') {
-          router.push('/dashboard/supplier')
-        } else {
-          router.push('/dashboard')
-        }
-        router.refresh()
-      }
+      toast.success('تم تسجيل الدخول بنجاح')
+      router.push('/dashboard')
+      router.refresh()
+      
     } catch (error) {
       console.error('Login error:', error)
       toast.error('حدث خطأ غير متوقع')
@@ -105,7 +104,7 @@ export default function LoginPage() {
           <div className="inline-flex items-center justify-center w-16 h-16 bg-primary-600 rounded-2xl mb-4">
             <ShoppingBag className="text-white" size={32} />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Ali Market</h1>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Ayman Market</h1>
           <p className="text-gray-600">نظام إدارة المخزن والمبيعات</p>
         </div>
 
@@ -150,7 +149,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center text-gray-600 text-sm mt-6">
-          © 2024 Ali Market. جميع الحقوق محفوظة
+          © 2026 Ayman Market. جميع الحقوق محفوظة
         </p>
       </div>
     </div>
