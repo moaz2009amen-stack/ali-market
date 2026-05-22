@@ -5,6 +5,8 @@ import StatCard from '@/components/dashboard/StatCard'
 import RecentInvoices from '@/components/dashboard/RecentInvoices'
 import Card from '@/components/ui/Card'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import InvoicePreview from '@/components/invoice/InvoicePreview'
+import { printThermalInvoice } from '@/lib/utils/exports'
 import { 
   DollarSign, 
   FileText, 
@@ -14,10 +16,12 @@ import {
   AlertTriangle
 } from 'lucide-react'
 import { formatCurrency } from '@/lib/utils/format'
+import toast from 'react-hot-toast'
 
 export default function DashboardPage() {
   const supabase = createClient()
   const [loading, setLoading] = useState(true)
+  const [previewInvoice, setPreviewInvoice] = useState(null)
   const [stats, setStats] = useState({
     totalSales: 0,
     totalInvoices: 0,
@@ -96,6 +100,27 @@ export default function DashboardPage() {
     }
   }
 
+  const handleViewInvoice = async (invoice) => {
+    try {
+      const { data: items, error } = await supabase
+        .from('invoice_items')
+        .select('*')
+        .eq('invoice_id', invoice.id)
+
+      if (error) throw error
+
+      const fullInvoice = {
+        ...invoice,
+        items: items || []
+      }
+
+      setPreviewInvoice(fullInvoice)
+    } catch (error) {
+      console.error('Error loading invoice:', error)
+      toast.error('حدث خطأ في تحميل الفاتورة')
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -162,8 +187,19 @@ export default function DashboardPage() {
 
       {/* آخر الفواتير */}
       <Card title="آخر الفواتير">
-        <RecentInvoices invoices={recentInvoices} />
+        <RecentInvoices invoices={recentInvoices} onView={handleViewInvoice} />
       </Card>
+
+      {previewInvoice && (
+        <InvoicePreview
+          invoice={previewInvoice}
+          onClose={() => setPreviewInvoice(null)}
+          onPrint={() => {
+            printThermalInvoice(previewInvoice)
+            setPreviewInvoice(null)
+          }}
+        />
+      )}
     </div>
   )
 }
