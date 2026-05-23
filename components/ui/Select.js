@@ -19,34 +19,43 @@ export default function Select({
         </label>
       )}
       
-      <select
-        id={name}
-        name={name}
-        value={value}
-        onChange={onChange}
-        required={required}
-        disabled={disabled}
-        className={`
-          w-full px-4 py-2.5 rounded-lg border text-right
-          ${error 
-            ? 'border-danger-500 focus:border-danger-500 focus:ring-danger-500' 
-            : 'border-gray-300 focus:border-primary-500 focus:ring-primary-500'
-          }
-          focus:ring-2 focus:ring-opacity-20 outline-none
-          disabled:bg-gray-100 disabled:cursor-not-allowed
-          transition-colors duration-200
-          appearance-none bg-no-repeat
-          bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20fill%3D%22none%22%20viewBox%3D%220%200%2020%2020%22%3E%3Cpath%20stroke%3D%22%236b7280%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20stroke-width%3D%221.5%22%20d%3D%22M6%208l4%204%204-4%22%2F%3E%3C%2Fsvg%3E')]
-          bg-[length:1.5em] bg-[left_0.5rem_center]
-        `}
-      >
-        <option value="">{placeholder}</option>
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+      <div className="relative">
+        <select
+          id={name}
+          name={name}
+          value={value}
+          onChange={onChange}
+          required={required}
+          disabled={disabled}
+          className={`
+            w-full px-4 py-2.5 rounded-lg border text-right
+            bg-white
+            ${error 
+              ? 'border-danger-500 focus:border-danger-500 focus:ring-danger-500' 
+              : 'border-gray-300 focus:border-primary-500 focus:ring-primary-500'
+            }
+            focus:ring-2 focus:ring-opacity-20 outline-none
+            disabled:bg-gray-100 disabled:cursor-not-allowed
+            transition-colors duration-200
+            appearance-none
+            cursor-pointer
+          `}
+        >
+          <option value="" disabled>{placeholder}</option>
+          {options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        
+        {/* Custom Arrow */}
+        <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+          <svg width="12" height="8" viewBox="0 0 12 8" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M1 1.5L6 6.5L11 1.5" stroke="#6B7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </div>
+      </div>
       
       {error && (
         <p className="mt-1.5 text-sm text-danger-500">{error}</p>
