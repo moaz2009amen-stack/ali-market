@@ -6,8 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import { 
   LayoutDashboard, 
   Package, 
-  Users, 
-  Truck,
+  Users,
   FileText, 
   DollarSign, 
   BarChart3,
@@ -67,12 +66,6 @@ export default function Sidebar({ isOpen, onClose, userRole }) {
       roles: ['owner', 'employee']
     },
     { 
-      title: 'الموردين', 
-      icon: Truck, 
-      href: '/dashboard/suppliers',
-      roles: ['owner']
-    },
-    { 
       title: 'الفواتير', 
       icon: FileText, 
       href: '/dashboard/invoices',
@@ -125,7 +118,7 @@ export default function Sidebar({ isOpen, onClose, userRole }) {
               <ShoppingBag className="text-white" size={24} />
             </div>
             <div>
-            <h1 className="text-lg font-bold text-gray-900">Ayman Market</h1>
+              <h1 className="text-lg font-bold text-gray-900">Ayman Market</h1>
               <p className="text-xs text-gray-500">نظام الإدارة</p>
             </div>
           </div>
