@@ -106,24 +106,28 @@ export default function SuppliersPage() {
 
         if (error) throw error
 
-        // إذا تم تفعيل تسجيل الدخول وكان هناك باسورد جديد
-        if (formData.can_login && formData.supplier_password && formData.username) {
-          // التحقق من وجود مستخدم مرتبط بالمورد
+        // إذا تم تفعيل تسجيل الدخول
+        if (formData.can_login && formData.username) {
           const { data: existingUser } = await supabase
             .from('users')
             .select('id')
             .eq('supplier_id', currentSupplier.id)
-            .single()
+            .maybeSingle()
 
-          if (existingUser) {
-            // تحديث اسم المستخدم فقط
+          if (!existingUser && formData.supplier_password) {
+            // إنشاء حساب جديد
+            try {
+              await createSupplierAccount(currentSupplier.id, formData.username, formData.supplier_password)
+            } catch (createError) {
+              console.error('Error creating account:', createError)
+              toast.error('تم تحديث المورد لكن فشل إنشاء حساب تسجيل الدخول')
+            }
+          } else if (existingUser) {
+            // تحديث اسم المستخدم
             await supabase
               .from('users')
               .update({ username: formData.username })
               .eq('id', existingUser.id)
-          } else {
-            // إنشاء حساب جديد
-            await createSupplierAccount(currentSupplier.id, formData.username, formData.supplier_password)
           }
         }
 
@@ -132,6 +136,7 @@ export default function SuppliersPage() {
         // إضافة مورد جديد
         const { data: { user } } = await supabase.auth.getUser()
         
+        // إضافة المورد أولاً
         const { data: newSupplier, error: supplierError } = await supabase
           .from('suppliers')
           .insert([{
@@ -144,24 +149,52 @@ export default function SuppliersPage() {
           .select()
           .single()
 
-        if (supplierError) throw supplierError
+        if (supplierError) {
+          console.error('Supplier insert error:', supplierError)
+          throw supplierError
+        }
+
+        console.log('✅ تم إضافة المورد:', newSupplier)
 
         // إذا تم السماح بتسجيل الدخول
         if (formData.can_login && formData.username && formData.supplier_password) {
-          await createSupplierAccount(newSupplier.id, formData.username, formData.supplier_password)
+          try {
+            await createSupplierAccount(newSupplier.id, formData.username, formData.supplier_password)
+            toast.success('تم إضافة المورد وإنشاء حساب تسجيل الدخول بنجاح')
+          } catch (createError) {
+            console.error('Account creation error:', createError)
+            
+            // حذف المورد إذا فشل إنشاء الحساب
+            await supabase
+              .from('suppliers')
+              .delete()
+              .eq('id', newSupplier.id)
+            
+            if (createError.message.includes('موجود مسبقاً')) {
+              toast.error('اسم المستخدم موجود مسبقاً')
+            } else {
+              toast.error('فشل في إنشاء حساب تسجيل الدخول. حاول مرة أخرى.')
+            }
+            
+            fetchSuppliers()
+            return
+          }
+        } else {
+          toast.success('تم إضافة المورد بنجاح')
         }
-
-        toast.success('تم إضافة المورد بنجاح')
       }
 
       fetchSuppliers()
       closeModal()
     } catch (error) {
-      console.error('Error saving supplier:', error)
+      console.error('Error in handleSubmit:', error)
+      
       if (error.message?.includes('duplicate') || error.message?.includes('unique')) {
-        toast.error('اسم المستخدم موجود مسبقاً')
+        toast.error('اسم المستخدم أو رقم الهاتف موجود مسبقاً')
+      } else if (error.message?.includes('موجود مسبقاً')) {
+        toast.error(error.message)
       } else {
-        toast.error('حدث خطأ في حفظ المورد')
+        toast.error('حدث خطأ. حاول مرة أخرى.')
       }
     }
   }
@@ -169,33 +202,87 @@ export default function SuppliersPage() {
   async function createSupplierAccount(supplierId, username, password) {
     try {
       // إنشاء email فريد
-      const email = `${username}@aymanmarket.supplier`
+      const email = `${username.toLowerCase()}@aymanmarket.local`
       
-      // التحقق من عدم وجود username مكرر
+      console.log('🔄 جاري إنشاء حساب للمورد...')
+      console.log('📧 Email:', email)
+      console.log('👤 Username:', username)
+      
+      // التحقق من عدم وجود username مكرر في users
       const { data: existingUser } = await supabase
         .from('users')
         .select('id')
         .eq('username', username)
-        .single()
+        .maybeSingle()
 
       if (existingUser) {
         throw new Error('اسم المستخدم موجود مسبقاً')
       }
 
-      // إنشاء المستخدم في Auth
+      // إنشاء المستخدم في Auth مع تعطيل تأكيد الإيميل
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: email,
         password: password,
         options: {
           data: {
             type: 'supplier',
-            username: username
+            username: username,
+            supplier_id: supplierId
           },
           emailRedirectTo: undefined
         }
       })
 
-      if (authError) throw authError
+      console.log('✅ Auth Response:', authData)
+      console.log('❌ Auth Error:', authError)
+
+      if (authError) {
+        console.error('🚫 خطأ في Auth:', authError.message)
+        
+        // التعامل مع خطأ "User already registered"
+        if (authError.message.includes('already registered')) {
+          // المستخدم موجود في Auth، نجرب نسجل دخول ونجيب الـ ID
+          const { data: signInData } = await supabase.auth.signInWithPassword({
+            email: email,
+            password: password
+          })
+          
+          if (signInData?.user) {
+            // استخدام الـ user الموجود
+            const userId = signInData.user.id
+            
+            // إضافة في جدول users
+            const { error: userError } = await supabase
+              .from('users')
+              .insert([{
+                id: userId,
+                email: email,
+                username: username,
+                full_name: username,
+                role: 'supplier',
+                supplier_id: supplierId
+              }])
+
+            if (userError && !userError.message.includes('duplicate')) {
+              throw userError
+            }
+            
+            // تسجيل خروج بعد الإنشاء
+            await supabase.auth.signOut()
+            
+            console.log('✅ تم إنشاء الحساب بنجاح')
+            return true
+          }
+        }
+        
+        throw authError
+      }
+
+      if (!authData.user) {
+        throw new Error('فشل في إنشاء الحساب')
+      }
+
+      console.log('👤 User ID:', authData.user.id)
 
       // إضافة المستخدم في جدول users
       const { error: userError } = await supabase
@@ -209,11 +296,16 @@ export default function SuppliersPage() {
           supplier_id: supplierId
         }])
 
-      if (userError) throw userError
+      if (userError) {
+        console.error('🚫 خطأ في جدول Users:', userError)
+        throw userError
+      }
 
+      console.log('✅ تم إنشاء الحساب بنجاح')
       return true
+      
     } catch (error) {
-      console.error('Error creating supplier account:', error)
+      console.error('💥 Error in createSupplierAccount:', error)
       throw error
     }
   }
