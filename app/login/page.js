@@ -33,47 +33,20 @@ export default function LoginPage() {
     setLoading(true)
     
     try {
-      // البحث في جدول المستخدمين
+      // البحث عن المستخدم
       const { data: user, error: userError } = await supabase
         .from('users')
-        .select('email')
+        .select('email, role')
         .eq('username', formData.username)
         .single()
 
       if (!user) {
-        // البحث في جدول الموردين
-        const { data: supplier, error: supplierError } = await supabase
-          .from('suppliers')
-          .select('email')
-          .eq('username', formData.username)
-          .eq('can_login', true)
-          .single()
-
-        if (!supplier) {
-          toast.error('اسم المستخدم أو كلمة المرور غير صحيحة')
-          setLoading(false)
-          return
-        }
-        
-        // تسجيل دخول المورد
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: supplier.email,
-          password: formData.password,
-        })
-
-        if (error) {
-          toast.error('كلمة المرور غير صحيحة')
-          setLoading(false)
-          return
-        }
-
-        toast.success('تم تسجيل الدخول بنجاح')
-        router.push('/dashboard')
-        router.refresh()
+        toast.error('اسم المستخدم أو كلمة المرور غير صحيحة')
+        setLoading(false)
         return
       }
 
-      // تسجيل دخول المستخدم
+      // تسجيل الدخول
       const { data, error } = await supabase.auth.signInWithPassword({
         email: user.email,
         password: formData.password,
@@ -149,7 +122,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center text-gray-600 text-sm mt-6">
-          © 2026 Ayman Market. جميع الحقوق محفوظة
+          © 2024 Ayman Market. جميع الحقوق محفوظة
         </p>
       </div>
     </div>
