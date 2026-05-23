@@ -8,7 +8,7 @@ const cairo = Cairo({
 })
 
 export const metadata = {
-  title: 'Ayman Market - نظام إدارة المخزن',
+  title: 'جملة أبو علي - نظام إدارة المخزن',
   description: 'نظام إدارة مخزن وتوزيع ومبيعات ذكي',
   manifest: '/manifest.json',
   themeColor: '#3b82f6',
