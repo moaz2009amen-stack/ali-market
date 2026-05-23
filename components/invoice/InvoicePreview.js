@@ -7,10 +7,10 @@ export default function InvoicePreview({ invoice, onClose, onPrint }) {
   if (!invoice) return null
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4 overflow-y-auto">
+      <div className="bg-white rounded-lg max-w-2xl w-full my-8">
         {/* Header */}
-        <div className="sticky top-0 bg-white border-b border-gray-200 p-4 flex items-center justify-between">
+        <div className="sticky top-0 bg-white border-b border-gray-200 p-4 flex items-center justify-between rounded-t-lg">
           <h3 className="text-lg font-bold text-gray-900">معاينة الفاتورة</h3>
           <div className="flex items-center gap-2">
             <Button onClick={onPrint} size="sm" variant="primary">
@@ -30,8 +30,9 @@ export default function InvoicePreview({ invoice, onClose, onPrint }) {
         <div className="p-6 space-y-6">
           {/* Header Info */}
           <div className="text-center border-b border-gray-200 pb-6">
-          <h1 className="text-2xl font-bold text-primary-600 mb-2">Ayman Market</h1>
-            <p className="text-gray-600">نظام إدارة المخزن والمبيعات</p>
+            <h1 className="text-3xl font-bold text-primary-600 mb-2">جملة أبو علي</h1>
+            <p className="text-gray-600 text-sm">نظام إدارة المخزن والمبيعات</p>
+            <p className="text-gray-500 text-xs mt-2">صاحب المحل: أيمن</p>
           </div>
 
           {/* Invoice Details */}
@@ -107,8 +108,8 @@ export default function InvoicePreview({ invoice, onClose, onPrint }) {
 
           {/* Footer */}
           <div className="text-center text-sm text-gray-500 border-t border-gray-200 pt-4">
-            <p>شكراً لتعاملكم معنا</p>
-            <p className="mt-1">{new Date().toLocaleString('ar-EG')}</p>
+            <p className="font-semibold">شكراً لتعاملكم معنا</p>
+            <p className="mt-1">جملة أبو علي - {new Date().toLocaleString('ar-EG')}</p>
           </div>
         </div>
       </div>
