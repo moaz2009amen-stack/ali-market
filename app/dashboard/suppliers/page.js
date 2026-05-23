@@ -75,6 +75,9 @@ export default function SuppliersPage() {
       if (!formData.supplier_password && !editMode) {
         newErrors.supplier_password = 'كلمة المرور مطلوبة'
       }
+      if (formData.supplier_password && formData.supplier_password.length < 6) {
+        newErrors.supplier_password = 'كلمة المرور يجب أن تكون 6 أحرف على الأقل'
+      }
     }
     
     setErrors(newErrors)
@@ -102,53 +105,52 @@ export default function SuppliersPage() {
           .eq('id', currentSupplier.id)
 
         if (error) throw error
+
+        // إذا تم تفعيل تسجيل الدخول وكان هناك باسورد جديد
+        if (formData.can_login && formData.supplier_password && formData.username) {
+          // التحقق من وجود مستخدم مرتبط بالمورد
+          const { data: existingUser } = await supabase
+            .from('users')
+            .select('id')
+            .eq('supplier_id', currentSupplier.id)
+            .single()
+
+          if (existingUser) {
+            // تحديث اسم المستخدم فقط
+            await supabase
+              .from('users')
+              .update({ username: formData.username })
+              .eq('id', existingUser.id)
+          } else {
+            // إنشاء حساب جديد
+            await createSupplierAccount(currentSupplier.id, formData.username, formData.supplier_password)
+          }
+        }
+
         toast.success('تم تحديث المورد بنجاح')
       } else {
         // إضافة مورد جديد
         const { data: { user } } = await supabase.auth.getUser()
         
-        let supplierEmail = null
-        
-        if (formData.can_login && formData.username && formData.supplier_password) {
-          // إنشاء email فريد للمورد
-          supplierEmail = `${formData.username}@aymanmarket.local`
-          
-          // محاولة إنشاء المستخدم
-          try {
-            const { data: authData, error: authError } = await supabase.auth.signUp({
-              email: supplierEmail,
-              password: formData.supplier_password,
-              options: {
-                data: {
-                  type: 'supplier',
-                  supplier_username: formData.username
-                }
-              }
-            })
-
-            if (authError) {
-              console.error('Auth error:', authError)
-              throw new Error('فشل في إنشاء حساب المورد')
-            }
-          } catch (authError) {
-            console.error('Signup error:', authError)
-            toast.error('حدث خطأ في إنشاء حساب تسجيل الدخول للمورد')
-            return
-          }
-        }
-        
-        const { error } = await supabase
+        const { data: newSupplier, error: supplierError } = await supabase
           .from('suppliers')
           .insert([{
             name: formData.name,
             phone: formData.phone,
             username: formData.can_login ? formData.username : null,
-            email: supplierEmail,
             can_login: formData.can_login,
             created_by: user.id
           }])
+          .select()
+          .single()
 
-        if (error) throw error
+        if (supplierError) throw supplierError
+
+        // إذا تم السماح بتسجيل الدخول
+        if (formData.can_login && formData.username && formData.supplier_password) {
+          await createSupplierAccount(newSupplier.id, formData.username, formData.supplier_password)
+        }
+
         toast.success('تم إضافة المورد بنجاح')
       }
 
@@ -156,11 +158,63 @@ export default function SuppliersPage() {
       closeModal()
     } catch (error) {
       console.error('Error saving supplier:', error)
-      if (error.message?.includes('duplicate key') || error.message?.includes('unique')) {
+      if (error.message?.includes('duplicate') || error.message?.includes('unique')) {
         toast.error('اسم المستخدم موجود مسبقاً')
       } else {
         toast.error('حدث خطأ في حفظ المورد')
       }
+    }
+  }
+
+  async function createSupplierAccount(supplierId, username, password) {
+    try {
+      // إنشاء email فريد
+      const email = `${username}@aymanmarket.supplier`
+      
+      // التحقق من عدم وجود username مكرر
+      const { data: existingUser } = await supabase
+        .from('users')
+        .select('id')
+        .eq('username', username)
+        .single()
+
+      if (existingUser) {
+        throw new Error('اسم المستخدم موجود مسبقاً')
+      }
+
+      // إنشاء المستخدم في Auth
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: email,
+        password: password,
+        options: {
+          data: {
+            type: 'supplier',
+            username: username
+          },
+          emailRedirectTo: undefined
+        }
+      })
+
+      if (authError) throw authError
+
+      // إضافة المستخدم في جدول users
+      const { error: userError } = await supabase
+        .from('users')
+        .insert([{
+          id: authData.user.id,
+          email: email,
+          username: username,
+          full_name: username,
+          role: 'supplier',
+          supplier_id: supplierId
+        }])
+
+      if (userError) throw userError
+
+      return true
+    } catch (error) {
+      console.error('Error creating supplier account:', error)
+      throw error
     }
   }
 
@@ -186,6 +240,21 @@ export default function SuppliersPage() {
     if (!supplierToDelete) return
 
     try {
+      // حذف حساب المستخدم المرتبط إن وجد
+      const { data: linkedUser } = await supabase
+        .from('users')
+        .select('id')
+        .eq('supplier_id', supplierToDelete.id)
+        .single()
+
+      if (linkedUser) {
+        await supabase
+          .from('users')
+          .delete()
+          .eq('id', linkedUser.id)
+      }
+
+      // حذف المورد
       const { error } = await supabase
         .from('suppliers')
         .delete()
@@ -331,7 +400,6 @@ export default function SuppliersPage() {
         />
       </Card>
 
-      {/* Modal إضافة/تعديل */}
       <Modal
         isOpen={modalOpen}
         onClose={closeModal}
@@ -393,7 +461,7 @@ export default function SuppliersPage() {
                   name="supplier_password"
                   value={formData.supplier_password}
                   onChange={handleChange}
-                  placeholder={editMode ? 'اتركها فارغة للإبقاء على القديمة' : 'كلمة مرور قوية'}
+                  placeholder={editMode ? 'اتركها فارغة للإبقاء على القديمة' : 'كلمة مرور (6 أحرف على الأقل)'}
                   required={formData.can_login && !editMode}
                   error={errors.supplier_password}
                 />
@@ -412,7 +480,6 @@ export default function SuppliersPage() {
         </form>
       </Modal>
 
-      {/* Confirm Dialog */}
       <ConfirmDialog
         isOpen={deleteConfirmOpen}
         onClose={() => {
@@ -421,7 +488,7 @@ export default function SuppliersPage() {
         }}
         onConfirm={confirmDelete}
         title="حذف المورد"
-        message={`هل أنت متأكد من حذف المورد "${supplierToDelete?.name}"؟`}
+        message={`هل أنت متأكد من حذف المورد "${supplierToDelete?.name}"؟ سيتم حذف حساب تسجيل الدخول أيضاً إن وُجد.`}
         confirmText="حذف المورد"
       />
     </div>
