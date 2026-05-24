@@ -310,12 +310,73 @@ export default function CustomersPage() {
           </Button>
         }
       >
-        <Table
-          columns={columns}
-          data={customers}
-          loading={loading}
-          emptyMessage="لا يوجد عملاء. ابدأ بإضافة عميل جديد!"
-        />
+        {/* الجدول للديسكتوب */}
+        <div className="hidden md:block overflow-x-auto">
+          <Table
+            columns={columns}
+            data={customers}
+            loading={loading}
+            emptyMessage="لا يوجد عملاء. ابدأ بإضافة عميل جديد!"
+          />
+        </div>
+
+        {/* Cards للموبايل */}
+        <div className="md:hidden space-y-3">
+          {loading ? (
+            <LoadingSpinner size="md" />
+          ) : customers.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">لا يوجد عملاء</div>
+          ) : (
+            customers.map((customer) => (
+              <div key={customer.id} className="bg-gray-50 rounded-lg p-4">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-gray-900">{customer.name}</h3>
+                    {customer.shop_name && (
+                      <p className="text-sm text-gray-500">{customer.shop_name}</p>
+                    )}
+                  </div>
+                  <Badge variant={customer.is_active ? 'success' : 'default'}>
+                    {customer.is_active ? 'نشط' : 'موقوف'}
+                  </Badge>
+                </div>
+
+                <div className="space-y-2 text-sm mb-3">
+                  <div className="flex items-center gap-2">
+                    <Phone size={14} className="text-gray-400" />
+                    <span className="font-mono">{formatPhone(customer.phone)}</span>
+                  </div>
+                  {customer.area && (
+                    <div className="text-gray-600">المنطقة: {customer.area}</div>
+                  )}
+                  <div>
+                    <span className="text-gray-600">الديون: </span>
+                    <span className={`font-semibold ${customer.total_debt > 0 ? 'text-danger-600' : ''}`}>
+                      {formatCurrency(customer.total_debt || 0)}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleEdit(customer)}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-primary-600 bg-primary-50 hover:bg-primary-100 rounded-lg transition-colors"
+                  >
+                    <Edit2 size={16} />
+                    <span className="text-sm">تعديل</span>
+                  </button>
+                  <button
+                    onClick={() => handleDelete(customer)}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-danger-600 bg-danger-50 hover:bg-danger-100 rounded-lg transition-colors"
+                  >
+                    <Trash2 size={16} />
+                    <span className="text-sm">حذف</span>
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       </Card>
 
       {/* Modal إضافة/تعديل عميل */}
