@@ -304,41 +304,41 @@ export default function ProductsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6 pb-safe">
       {/* إحصائيات سريعة */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card padding={false} className="p-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+        <Card padding={false} className="p-4 sm:p-6">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">إجمالي المنتجات</p>
-              <p className="text-2xl font-bold text-gray-900">{stats.total}</p>
+              <p className="text-xs sm:text-sm text-gray-600">إجمالي المنتجات</p>
+              <p className="text-xl sm:text-2xl font-bold text-gray-900">{stats.total}</p>
             </div>
-            <div className="w-12 h-12 bg-primary-100 rounded-lg flex items-center justify-center">
-              <Package className="text-primary-600" size={24} />
+            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-primary-100 rounded-lg flex items-center justify-center flex-shrink-0">
+              <Package className="text-primary-600" size={20} />
             </div>
           </div>
         </Card>
 
-        <Card padding={false} className="p-6">
+        <Card padding={false} className="p-4 sm:p-6">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">منتجات منخفضة</p>
-              <p className="text-2xl font-bold text-danger-600">{stats.lowStock}</p>
+              <p className="text-xs sm:text-sm text-gray-600">منتجات منخفضة</p>
+              <p className="text-xl sm:text-2xl font-bold text-danger-600">{stats.lowStock}</p>
             </div>
-            <div className="w-12 h-12 bg-danger-100 rounded-lg flex items-center justify-center">
-              <AlertTriangle className="text-danger-600" size={24} />
+            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-danger-100 rounded-lg flex items-center justify-center flex-shrink-0">
+              <AlertTriangle className="text-danger-600" size={20} />
             </div>
           </div>
         </Card>
 
-        <Card padding={false} className="p-6">
+        <Card padding={false} className="p-4 sm:p-6">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">قيمة المخزن</p>
-              <p className="text-2xl font-bold text-success-600">{formatCurrency(stats.totalValue)}</p>
+              <p className="text-xs sm:text-sm text-gray-600">قيمة المخزن</p>
+              <p className="text-xl sm:text-2xl font-bold text-success-600">{formatCurrency(stats.totalValue)}</p>
             </div>
-            <div className="w-12 h-12 bg-success-100 rounded-lg flex items-center justify-center">
-              <Package className="text-success-600" size={24} />
+            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-success-100 rounded-lg flex items-center justify-center flex-shrink-0">
+              <Package className="text-success-600" size={20} />
             </div>
           </div>
         </Card>
@@ -348,18 +348,79 @@ export default function ProductsPage() {
       <Card 
         title="المنتجات"
         action={
-          <Button onClick={openModal} size="md">
-            <Plus size={20} />
-            إضافة منتج
+          <Button onClick={openModal} size="sm" className="text-sm">
+            <Plus size={18} />
+            <span className="hidden sm:inline">إضافة منتج</span>
+            <span className="sm:hidden">إضافة</span>
           </Button>
         }
       >
-        <Table
-          columns={columns}
-          data={products}
-          loading={loading}
-          emptyMessage="لا توجد منتجات. ابدأ بإضافة منتج جديد!"
-        />
+        {/* الجدول للديسكتوب */}
+        <div className="hidden md:block overflow-x-auto">
+          <Table
+            columns={columns}
+            data={products}
+            loading={loading}
+            emptyMessage="لا توجد منتجات"
+          />
+        </div>
+
+        {/* Cards للموبايل */}
+        <div className="md:hidden space-y-3">
+          {loading ? (
+            <LoadingSpinner size="md" />
+          ) : products.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">لا توجد منتجات</div>
+          ) : (
+            products.map((product) => (
+              <div key={product.id} className="bg-gray-50 rounded-lg p-4">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-gray-900 truncate">{product.name}</h3>
+                    <p className="text-sm text-gray-500">{product.category}</p>
+                  </div>
+                  <Badge variant={product.quantity > product.min_stock ? 'success' : 'danger'}>
+                    {product.quantity > product.min_stock ? 'متوفر' : 'منخفض'}
+                  </Badge>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 text-sm mb-3">
+                  <div>
+                    <p className="text-gray-600">سعر الشراء</p>
+                    <p className="font-semibold">{formatCurrency(product.cost_price)}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-600">سعر البيع</p>
+                    <p className="font-semibold">{formatCurrency(product.selling_price)}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-600">الكمية</p>
+                    <p className={`font-semibold ${product.quantity <= product.min_stock ? 'text-danger-600' : ''}`}>
+                      {formatNumber(product.quantity)} {product.unit}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleEdit(product)}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-primary-600 bg-primary-50 hover:bg-primary-100 rounded-lg transition-colors"
+                  >
+                    <Edit2 size={16} />
+                    <span className="text-sm">تعديل</span>
+                  </button>
+                  <button
+                    onClick={() => handleDelete(product)}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-danger-600 bg-danger-50 hover:bg-danger-100 rounded-lg transition-colors"
+                  >
+                    <Trash2 size={16} />
+                    <span className="text-sm">حذف</span>
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       </Card>
 
       {/* Modal إضافة/تعديل منتج */}
