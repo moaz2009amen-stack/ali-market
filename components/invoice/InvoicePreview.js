@@ -84,16 +84,20 @@ export default function InvoicePreview({ invoice, onClose, onPrint }) {
           <div className="border-t border-gray-200 pt-4 space-y-2">
             <div className="flex justify-between text-lg">
               <span className="font-medium text-gray-700">الإجمالي:</span>
-              <span className="font-bold text-gray-900">{formatCurrency(invoice.total_amount)}</span>
+              <span className="font-bold text-gray-900">
+                {formatCurrency(invoice.total_amount || 0)}
+              </span>
             </div>
             <div className="flex justify-between text-lg">
               <span className="font-medium text-gray-700">المدفوع:</span>
-              <span className="font-bold text-success-600">{formatCurrency(invoice.paid_amount)}</span>
+              <span className="font-bold text-success-600">
+                {formatCurrency(invoice.paid_amount || 0)}
+              </span>
             </div>
             <div className="flex justify-between text-xl border-t border-gray-300 pt-2">
               <span className="font-bold text-gray-700">المتبقي:</span>
-              <span className={`font-bold ${invoice.remaining_amount > 0 ? 'text-danger-600' : 'text-success-600'}`}>
-                {formatCurrency(invoice.remaining_amount)}
+              <span className={`font-bold ${(invoice.remaining_amount || 0) > 0 ? 'text-danger-600' : 'text-success-600'}`}>
+                {formatCurrency(invoice.remaining_amount || 0)}
               </span>
             </div>
           </div>
