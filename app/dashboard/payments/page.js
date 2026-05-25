@@ -252,12 +252,55 @@ export default function PaymentsPage() {
           </Button>
         }
       >
-        <Table
-          columns={columns}
-          data={payments}
-          loading={loading}
-          emptyMessage="لا توجد تحصيلات"
-        />
+        {/* جدول التحصيلات - Desktop */}
+        <div className="hidden md:block">
+          <Table
+            columns={columns}
+            data={payments}
+            loading={loading}
+            emptyMessage="لا توجد تحصيلات"
+          />
+        </div>
+
+        {/* Cards للموبايل */}
+        <div className="md:hidden space-y-3">
+          {loading ? (
+            <LoadingSpinner size="md" />
+          ) : payments.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">لا توجد تحصيلات</div>
+          ) : (
+            payments.map((payment) => (
+              <div key={payment.id} className="bg-gray-50 rounded-lg p-4">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-gray-900 truncate">{payment.customer_name}</p>
+                    <p className="text-xs text-gray-500">{formatDateTime(payment.created_at)}</p>
+                  </div>
+                  <div className="text-left">
+                    <p className="font-bold text-success-600">{formatCurrency(payment.amount)}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div>
+                    <span className="text-gray-600">الطريقة: </span>
+                    <span className="font-medium">{payment.payment_method}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">المحصّل: </span>
+                    <span className="font-medium">{payment.collected_by_name}</span>
+                  </div>
+                </div>
+
+                {payment.notes && (
+                  <div className="mt-2 pt-2 border-t border-gray-200">
+                    <p className="text-sm text-gray-600">{payment.notes}</p>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
       </Card>
 
       {/* Modal تسجيل تحصيل */}
