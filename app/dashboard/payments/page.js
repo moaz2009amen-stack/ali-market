@@ -32,23 +32,22 @@ export default function PaymentsPage() {
 
   async function fetchData() {
     try {
-      // جلب التحصيلات
       const { data: paymentsData, error: paymentsError } = await supabase
         .from('payments')
         .select(`
           *,
-          customers (name, shop_name),
-          users (full_name)
+          customers (name),
+          users (full_name, username)
         `)
         .order('created_at', { ascending: false })
 
       if (paymentsError) throw paymentsError
 
-      // جلب العملاء الذين عليهم ديون
       const { data: customersData, error: customersError } = await supabase
         .from('customers')
-        .select('id, name, shop_name, total_debt')
+        .select('id, name, total_debt')
         .gt('total_debt', 0)
+        .eq('is_active', true)
         .order('name')
 
       if (customersError) throw customersError
@@ -56,7 +55,7 @@ export default function PaymentsPage() {
       setPayments(paymentsData?.map(p => ({
         ...p,
         customer_name: p.customers?.name || 'غير معروف',
-        collected_by_name: p.users?.full_name || 'غير معروف'
+        collected_by_name: p.users?.full_name || p.users?.username || 'غير معروف'
       })) || [])
       
       setCustomers(customersData || [])
@@ -80,9 +79,10 @@ export default function PaymentsPage() {
     const newErrors = {}
     
     if (!formData.customer_id) newErrors.customer_id = 'يرجى اختيار العميل'
-    if (!formData.amount || formData.amount <= 0) newErrors.amount = 'المبلغ غير صحيح'
+    if (!formData.amount || parseFloat(formData.amount) <= 0) {
+      newErrors.amount = 'المبلغ غير صحيح'
+    }
     
-    // التحقق من أن المبلغ لا يتجاوز الدين
     const customer = customers.find(c => c.id === formData.customer_id)
     if (customer && parseFloat(formData.amount) > customer.total_debt) {
       newErrors.amount = `المبلغ أكبر من الدين المستحق (${formatCurrency(customer.total_debt)})`
@@ -143,10 +143,7 @@ export default function PaymentsPage() {
       accessor: 'created_at',
       render: (row) => formatDateTime(row.created_at)
     },
-    { 
-      header: 'العميل', 
-      accessor: 'customer_name'
-    },
+    { header: 'العميل', accessor: 'customer_name' },
     { 
       header: 'المبلغ', 
       accessor: 'amount',
@@ -156,14 +153,8 @@ export default function PaymentsPage() {
         </span>
       )
     },
-    { 
-      header: 'طريقة الدفع', 
-      accessor: 'payment_method'
-    },
-    { 
-      header: 'المحصّل', 
-      accessor: 'collected_by_name'
-    },
+    { header: 'طريقة الدفع', accessor: 'payment_method' },
+    { header: 'المحصّل', accessor: 'collected_by_name' },
     { 
       header: 'ملاحظات', 
       accessor: 'notes',
@@ -171,14 +162,14 @@ export default function PaymentsPage() {
     },
   ]
 
-  // حساب الإحصائيات
   const today = new Date().toISOString().split('T')[0]
   const stats = {
     totalPayments: payments.length,
-    todayPayments: payments.filter(p => p.created_at.startsWith(today)).length,
-    totalAmount: payments.reduce((sum, p) => sum + p.amount, 0),
-    todayAmount: payments.filter(p => p.created_at.startsWith(today))
-      .reduce((sum, p) => sum + p.amount, 0)
+    todayPayments: payments.filter(p => p.created_at?.startsWith(today)).length,
+    totalAmount: payments.reduce((sum, p) => sum + (p.amount || 0), 0),
+    todayAmount: payments
+      .filter(p => p.created_at?.startsWith(today))
+      .reduce((sum, p) => sum + (p.amount || 0), 0)
   }
 
   if (loading) {
@@ -190,53 +181,53 @@ export default function PaymentsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {/* إحصائيات */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card padding={false} className="p-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <Card padding={false} className="p-4 sm:p-6">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">إجمالي التحصيلات</p>
-              <p className="text-2xl font-bold text-gray-900">{stats.totalPayments}</p>
+              <p className="text-xs sm:text-sm text-gray-600">إجمالي التحصيلات</p>
+              <p className="text-xl sm:text-2xl font-bold text-gray-900">{stats.totalPayments}</p>
             </div>
-            <div className="w-12 h-12 bg-primary-100 rounded-lg flex items-center justify-center">
-              <DollarSign className="text-primary-600" size={24} />
+            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-primary-100 rounded-lg flex items-center justify-center">
+              <DollarSign className="text-primary-600" size={20} />
             </div>
           </div>
         </Card>
 
-        <Card padding={false} className="p-6">
+        <Card padding={false} className="p-4 sm:p-6">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">تحصيلات اليوم</p>
-              <p className="text-2xl font-bold text-success-600">{stats.todayPayments}</p>
+              <p className="text-xs sm:text-sm text-gray-600">تحصيلات اليوم</p>
+              <p className="text-xl sm:text-2xl font-bold text-success-600">{stats.todayPayments}</p>
             </div>
-            <div className="w-12 h-12 bg-success-100 rounded-lg flex items-center justify-center">
-              <Calendar className="text-success-600" size={24} />
+            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-success-100 rounded-lg flex items-center justify-center">
+              <Calendar className="text-success-600" size={20} />
             </div>
           </div>
         </Card>
 
-        <Card padding={false} className="p-6">
+        <Card padding={false} className="p-4 sm:p-6">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">إجمالي المبالغ</p>
-              <p className="text-2xl font-bold text-primary-600">{formatCurrency(stats.totalAmount)}</p>
+              <p className="text-xs sm:text-sm text-gray-600">إجمالي المبالغ</p>
+              <p className="text-base sm:text-xl font-bold text-primary-600">{formatCurrency(stats.totalAmount)}</p>
             </div>
-            <div className="w-12 h-12 bg-primary-100 rounded-lg flex items-center justify-center">
-              <TrendingUp className="text-primary-600" size={24} />
+            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-primary-100 rounded-lg flex items-center justify-center">
+              <TrendingUp className="text-primary-600" size={20} />
             </div>
           </div>
         </Card>
 
-        <Card padding={false} className="p-6">
+        <Card padding={false} className="p-4 sm:p-6">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">تحصيلات اليوم</p>
-              <p className="text-2xl font-bold text-success-600">{formatCurrency(stats.todayAmount)}</p>
+              <p className="text-xs sm:text-sm text-gray-600">مبالغ اليوم</p>
+              <p className="text-base sm:text-xl font-bold text-success-600">{formatCurrency(stats.todayAmount)}</p>
             </div>
-            <div className="w-12 h-12 bg-success-100 rounded-lg flex items-center justify-center">
-              <DollarSign className="text-success-600" size={24} />
+            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-success-100 rounded-lg flex items-center justify-center">
+              <DollarSign className="text-success-600" size={20} />
             </div>
           </div>
         </Card>
@@ -246,13 +237,13 @@ export default function PaymentsPage() {
       <Card 
         title="التحصيلات"
         action={
-          <Button onClick={openModal} size="md">
-            <Plus size={20} />
-            تسجيل تحصيل
+          <Button onClick={openModal} size="sm">
+            <Plus size={18} />
+            <span className="hidden sm:inline">تسجيل تحصيل</span>
           </Button>
         }
       >
-        {/* جدول التحصيلات - Desktop */}
+        {/* Desktop */}
         <div className="hidden md:block">
           <Table
             columns={columns}
@@ -262,11 +253,9 @@ export default function PaymentsPage() {
           />
         </div>
 
-        {/* Cards للموبايل */}
+        {/* Mobile Cards */}
         <div className="md:hidden space-y-3">
-          {loading ? (
-            <LoadingSpinner size="md" />
-          ) : payments.length === 0 ? (
+          {payments.length === 0 ? (
             <div className="text-center py-8 text-gray-500">لا توجد تحصيلات</div>
           ) : (
             payments.map((payment) => (
@@ -276,26 +265,22 @@ export default function PaymentsPage() {
                     <p className="font-semibold text-gray-900 truncate">{payment.customer_name}</p>
                     <p className="text-xs text-gray-500">{formatDateTime(payment.created_at)}</p>
                   </div>
-                  <div className="text-left">
-                    <p className="font-bold text-success-600">{formatCurrency(payment.amount)}</p>
-                  </div>
+                  <p className="font-bold text-success-600 mr-2">{formatCurrency(payment.amount)}</p>
                 </div>
-
                 <div className="grid grid-cols-2 gap-2 text-sm">
                   <div>
-                    <span className="text-gray-600">الطريقة: </span>
+                    <span className="text-gray-500">الطريقة: </span>
                     <span className="font-medium">{payment.payment_method}</span>
                   </div>
                   <div>
-                    <span className="text-gray-600">المحصّل: </span>
+                    <span className="text-gray-500">المحصّل: </span>
                     <span className="font-medium">{payment.collected_by_name}</span>
                   </div>
                 </div>
-
                 {payment.notes && (
-                  <div className="mt-2 pt-2 border-t border-gray-200">
-                    <p className="text-sm text-gray-600">{payment.notes}</p>
-                  </div>
+                  <p className="text-sm text-gray-600 mt-2 pt-2 border-t border-gray-200">
+                    {payment.notes}
+                  </p>
                 )}
               </div>
             ))
@@ -303,13 +288,8 @@ export default function PaymentsPage() {
         </div>
       </Card>
 
-      {/* Modal تسجيل تحصيل */}
-      <Modal
-        isOpen={modalOpen}
-        onClose={closeModal}
-        title="تسجيل تحصيل جديد"
-        size="md"
-      >
+      {/* Modal */}
+      <Modal isOpen={modalOpen} onClose={closeModal} title="تسجيل تحصيل جديد" size="md">
         <form onSubmit={handleSubmit} className="space-y-4">
           <Select
             label="العميل"
@@ -318,7 +298,7 @@ export default function PaymentsPage() {
             onChange={handleChange}
             options={customers.map(c => ({
               value: c.id,
-              label: `${c.name} - ${formatCurrency(c.total_debt)}`
+              label: `${c.name} - الدين: ${formatCurrency(c.total_debt)}`
             }))}
             placeholder="اختر العميل"
             required
@@ -345,7 +325,7 @@ export default function PaymentsPage() {
             options={[
               { value: 'نقدي', label: 'نقدي' },
               { value: 'فيزا', label: 'فيزا' },
-              { value: 'تحويل بنكي', label: 'تحويل بنكي' },
+              { value: 'تحويل', label: 'تحويل بنكي' },  // ✅ القيمة "تحويل" متوافقة مع DB
               { value: 'شيك', label: 'شيك' },
             ]}
           />
@@ -358,7 +338,7 @@ export default function PaymentsPage() {
             placeholder="أي ملاحظات..."
           />
 
-          <div className="flex gap-3 pt-4">
+          <div className="flex gap-3 pt-2">
             <Button type="submit" variant="primary" fullWidth>
               تسجيل التحصيل
             </Button>
