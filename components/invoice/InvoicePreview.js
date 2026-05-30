@@ -26,16 +26,14 @@ export default function InvoicePreview({ invoice, onClose, onPrint }) {
           </div>
         </div>
 
-        {/* Invoice Content */}
         <div className="p-6 space-y-6">
-          {/* Header Info */}
+          {/* اسم الموقع فقط - بدون صاحب المحل */}
           <div className="text-center border-b border-gray-200 pb-6">
             <h1 className="text-3xl font-bold text-primary-600 mb-2">جملة أبو علي</h1>
             <p className="text-gray-600 text-sm">نظام إدارة المخزن والمبيعات</p>
-            <p className="text-gray-500 text-xs mt-2">صاحب المحل: أيمن</p>
           </div>
 
-          {/* Invoice Details */}
+          {/* تفاصيل الفاتورة */}
           <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded-lg">
             <div>
               <p className="text-sm text-gray-600">رقم الفاتورة</p>
@@ -51,7 +49,7 @@ export default function InvoicePreview({ invoice, onClose, onPrint }) {
             </div>
           </div>
 
-          {/* Items Table */}
+          {/* المنتجات */}
           <div>
             <h4 className="font-bold text-gray-900 mb-3">المنتجات</h4>
             <div className="border border-gray-200 rounded-lg overflow-hidden">
@@ -65,13 +63,13 @@ export default function InvoicePreview({ invoice, onClose, onPrint }) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
-                  {invoice.items?.map((item, index) => (
+                  {(invoice.items || []).map((item, index) => (
                     <tr key={index}>
                       <td className="px-4 py-3 text-gray-900">{item.product_name}</td>
                       <td className="px-4 py-3 text-gray-900">{item.quantity}</td>
-                      <td className="px-4 py-3 text-gray-900">{formatCurrency(item.selling_price)}</td>
+                      <td className="px-4 py-3 text-gray-900">{formatCurrency(item.selling_price || 0)}</td>
                       <td className="px-4 py-3 font-semibold text-gray-900">
-                        {formatCurrency(item.quantity * item.selling_price)}
+                        {formatCurrency((item.quantity || 0) * (item.selling_price || 0))}
                       </td>
                     </tr>
                   ))}
@@ -80,7 +78,7 @@ export default function InvoicePreview({ invoice, onClose, onPrint }) {
             </div>
           </div>
 
-          {/* Totals */}
+          {/* الإجماليات */}
           <div className="border-t border-gray-200 pt-4 space-y-2">
             <div className="flex justify-between text-lg">
               <span className="font-medium text-gray-700">الإجمالي:</span>
@@ -102,7 +100,7 @@ export default function InvoicePreview({ invoice, onClose, onPrint }) {
             </div>
           </div>
 
-          {/* Notes */}
+          {/* ملاحظات */}
           {invoice.notes && (
             <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
               <p className="text-sm font-medium text-yellow-800 mb-1">ملاحظات:</p>
@@ -113,7 +111,7 @@ export default function InvoicePreview({ invoice, onClose, onPrint }) {
           {/* Footer */}
           <div className="text-center text-sm text-gray-500 border-t border-gray-200 pt-4">
             <p className="font-semibold">شكراً لتعاملكم معنا</p>
-            <p className="mt-1">جملة أبو علي - {new Date().toLocaleString('ar-EG')}</p>
+            <p className="mt-1">جملة أبو علي</p>
           </div>
         </div>
       </div>
