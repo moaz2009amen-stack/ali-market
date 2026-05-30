@@ -5,8 +5,8 @@ import { createClient } from '@/lib/supabase/client'
 import Sidebar from '@/components/layout/Sidebar'
 import Header from '@/components/layout/Header'
 import MobileNav from '@/components/layout/MobileNav'
-import Toast from '@/components/ui/Toast'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { Toaster } from 'react-hot-toast'
 
 export default function DashboardLayout({ children }) {
   const router = useRouter()
@@ -18,10 +18,8 @@ export default function DashboardLayout({ children }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // التحقق من الجلسة المحفوظة
     checkUser()
 
-    // الاستماع لتغييرات الـ Auth
     const { data: authListener } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (event === 'SIGNED_OUT') {
@@ -39,18 +37,15 @@ export default function DashboardLayout({ children }) {
 
   async function checkUser() {
     try {
-      // جلب الجلسة الحالية
-      const { data: { session } } = await supabase.auth.getSession()
+      const { data: { user } } = await supabase.auth.getUser()
       
-      if (!session) {
+      if (!user) {
         router.push('/login')
         return
       }
 
-      const user = session.user
       setUser(user)
 
-      // جلب role المستخدم
       const { data: userData, error } = await supabase
         .from('users')
         .select('role, username')
@@ -73,33 +68,59 @@ export default function DashboardLayout({ children }) {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <LoadingSpinner size="lg" />
       </div>
     )
   }
 
+  if (!user) return null
+
   return (
-    <div className="min-h-screen bg-gray-50 flex">
-      <Toast />
-      
+    <div className="min-h-screen bg-gray-50 flex" dir="rtl">
+      {/* Toaster من react-hot-toast */}
+      <Toaster
+        position="top-center"
+        toastOptions={{
+          duration: 3000,
+          style: {
+            background: '#fff',
+            color: '#111',
+            fontFamily: 'Cairo, sans-serif',
+          },
+          success: {
+            iconTheme: {
+              primary: '#16a34a',
+              secondary: '#fff',
+            },
+          },
+          error: {
+            iconTheme: {
+              primary: '#dc2626',
+              secondary: '#fff',
+            },
+          },
+        }}
+      />
+
       <Sidebar 
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         userRole={userRole}
       />
 
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col min-h-screen overflow-hidden">
         <Header 
           onMenuClick={() => setSidebarOpen(!sidebarOpen)}
         />
         
-        <main className="flex-1 overflow-y-auto p-4 lg:p-6 pb-20 lg:pb-6">
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 pb-20 lg:pb-8">
           {children}
         </main>
-      </div>
 
-      <MobileNav />
+        {/* ✅ مرر userRole لـ MobileNav */}
+        <MobileNav userRole={userRole} />
+      </div>
     </div>
   )
 }
