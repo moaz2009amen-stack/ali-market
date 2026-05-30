@@ -4,275 +4,147 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Card from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
-import Input from '@/components/ui/Input'
-import Select from '@/components/ui/Select'
+import Badge from '@/components/ui/Badge'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import { Plus, Trash2, Save, Printer, ArrowRight } from 'lucide-react'
-import { formatCurrency } from '@/lib/utils/format'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
+import InvoicePreview from '@/components/invoice/InvoicePreview'
 import { printThermalInvoice } from '@/lib/utils/exports'
+import { Plus, Eye, Edit2, Trash2, FileText, Search } from 'lucide-react'
+import { formatCurrency, formatDate } from '@/lib/utils/format'
 import toast from 'react-hot-toast'
 
-export default function NewInvoicePage() {
+export default function InvoicesPage() {
   const router = useRouter()
   const supabase = createClient()
-  
+
+  const [invoices, setInvoices] = useState([])
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [customers, setCustomers] = useState([])
-  const [products, setProducts] = useState([])
-  
-  const [customerType, setCustomerType] = useState('existing') // 'existing' or 'temporary'
-  const [selectedCustomer, setSelectedCustomer] = useState('')
-  const [temporaryCustomerName, setTemporaryCustomerName] = useState('')
-  const [invoiceItems, setInvoiceItems] = useState([])
-  const [paidAmount, setPaidAmount] = useState('')
-  const [notes, setNotes] = useState('')
+  const [userRole, setUserRole] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [filterStatus, setFilterStatus] = useState('all')
+  const [previewInvoice, setPreviewInvoice] = useState(null)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [invoiceToDelete, setInvoiceToDelete] = useState(null)
 
   useEffect(() => {
-    fetchInitialData()
+    fetchUserRole()
+    fetchInvoices()
   }, [])
 
-  async function fetchInitialData() {
+  async function fetchUserRole() {
     try {
-      const { data: customersData, error: customersError } = await supabase
-        .from('customers')
-        .select('id, name, shop_name')
-        .eq('is_active', true)
-        .order('name')
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        const { data } = await supabase
+          .from('users')
+          .select('role')
+          .eq('id', user.id)
+          .single()
+        setUserRole(data?.role || 'employee')
+      }
+    } catch (e) {}
+  }
 
-      if (customersError) throw customersError
+  async function fetchInvoices() {
+    try {
+      const { data, error } = await supabase
+        .from('invoices')
+        .select(`
+          *,
+          customers (name)
+        `)
+        .order('created_at', { ascending: false })
 
-      const { data: productsData, error: productsError } = await supabase
-        .from('products')
-        .select('*')
-        .eq('is_active', true)
-        .gt('quantity', 0)
-        .order('name')
+      if (error) throw error
 
-      if (productsError) throw productsError
-
-      setCustomers(customersData || [])
-      setProducts(productsData || [])
+      setInvoices(data?.map(inv => ({
+        ...inv,
+        customer_name: inv.customers?.name || 'غير معروف'
+      })) || [])
     } catch (error) {
-      console.error('Error fetching data:', error)
-      toast.error('حدث خطأ في تحميل البيانات')
+      console.error('Error fetching invoices:', error)
+      toast.error('حدث خطأ في تحميل الفواتير')
     } finally {
       setLoading(false)
     }
   }
 
-  const addInvoiceItem = () => {
-    setInvoiceItems([
-      ...invoiceItems,
-      {
-        id: Date.now(),
-        product_id: '',
-        product_name: '',
-        quantity: 1,
-        cost_price: 0,
-        selling_price: 0,
-        available_quantity: 0
-      }
-    ])
-  }
-
-  const removeInvoiceItem = (itemId) => {
-    setInvoiceItems(invoiceItems.filter(item => item.id !== itemId))
-  }
-
-  const updateInvoiceItem = (itemId, field, value) => {
-    setInvoiceItems(invoiceItems.map(item => {
-      if (item.id === itemId) {
-        let updatedItem = { ...item, [field]: value }
-        
-        if (field === 'product_id' && value) {
-          const product = products.find(p => p.id === value)
-          if (product) {
-            updatedItem = {
-              ...updatedItem,
-              product_name: product.name,
-              cost_price: product.cost_price,
-              selling_price: product.selling_price,
-              available_quantity: product.quantity
-            }
-          }
-        }
-        
-        return updatedItem
-      }
-      return item
-    }))
-  }
-
-  const calculateTotals = () => {
-    const total = invoiceItems.reduce((sum, item) => {
-      return sum + (item.quantity * item.selling_price)
-    }, 0)
-    
-    const paid = parseFloat(paidAmount) || 0
-    const remaining = total - paid
-    
-    return { total, paid, remaining }
-  }
-
-  const validateInvoice = () => {
-    if (customerType === 'existing' && !selectedCustomer) {
-      toast.error('يرجى اختيار العميل')
-      return false
-    }
-    
-    if (customerType === 'temporary' && !temporaryCustomerName.trim()) {
-      toast.error('يرجى إدخال اسم العميل')
-      return false
-    }
-    
-    if (invoiceItems.length === 0) {
-      toast.error('يرجى إضافة منتج واحد على الأقل')
-      return false
-    }
-    
-    for (const item of invoiceItems) {
-      if (!item.product_id) {
-        toast.error('يرجى اختيار المنتج لكل سطر')
-        return false
-      }
-      
-      if (item.quantity <= 0) {
-        toast.error('الكمية يجب أن تكون أكبر من صفر')
-        return false
-      }
-      
-      if (item.quantity > item.available_quantity) {
-        toast.error(`الكمية المتاحة من ${item.product_name} هي ${item.available_quantity} فقط`)
-        return false
-      }
-    }
-    
-    const { total, paid } = calculateTotals()
-    
-    if (paid < 0 || paid > total) {
-      toast.error('المبلغ المدفوع غير صحيح')
-      return false
-    }
-    
-    return true
-  }
-
-  const handleSaveInvoice = async (printAfterSave = false) => {
-    if (!validateInvoice()) return
-    
-    setSaving(true)
-    
+  const handleView = async (invoice) => {
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      const { total, paid, remaining } = calculateTotals()
-      
-      const { data: invoiceNumberData } = await supabase
-        .rpc('generate_invoice_number')
-      
-      const invoiceNumber = invoiceNumberData || `INV-${Date.now()}`
-      
-      let paymentStatus = 'unpaid'
-      if (paid >= total) paymentStatus = 'paid'
-      else if (paid > 0) paymentStatus = 'partial'
-      
-      let finalCustomerId = selectedCustomer
-      let customerName = ''
+      const { data: items, error } = await supabase
+        .from('invoice_items')
+        .select('*')
+        .eq('invoice_id', invoice.id)
 
-      // إذا كان عميل مؤقت، نسجله أولاً
-      if (customerType === 'temporary') {
-        const { data: newCustomer, error: customerError } = await supabase
-          .from('customers')
-          .insert([{
-            name: temporaryCustomerName,
-            phone: 'مؤقت',
-            is_active: false, // عميل مؤقت
-            created_by: user.id
-          }])
-          .select()
-          .single()
+      if (error) throw error
 
-        if (customerError) throw customerError
-        finalCustomerId = newCustomer.id
-        customerName = temporaryCustomerName
-      } else {
-        const customer = customers.find(c => c.id === selectedCustomer)
-        customerName = customer?.name || 'غير معروف'
-      }
+      setPreviewInvoice({ ...invoice, items: items || [] })
+    } catch (error) {
+      toast.error('حدث خطأ في تحميل الفاتورة')
+    }
+  }
 
-      // حفظ الفاتورة
-      const { data: invoice, error: invoiceError } = await supabase
-        .from('invoices')
-        .insert([{
-          invoice_number: invoiceNumber,
-          customer_id: finalCustomerId,
-          total_amount: total,
-          paid_amount: paid,
-          remaining_amount: remaining,
-          payment_status: paymentStatus,
-          notes: notes,
-          created_by: user.id
-        }])
-        .select()
-        .single()
-      
-      if (invoiceError) throw invoiceError
-      
-      // حفظ بنود الفاتورة
-      const items = invoiceItems.map(item => ({
-        invoice_id: invoice.id,
-        product_id: item.product_id,
-        product_name: item.product_name,
-        quantity: item.quantity,
-        cost_price: item.cost_price,
-        selling_price: item.selling_price,
-        total: item.quantity * item.selling_price,
-        profit: (item.selling_price - item.cost_price) * item.quantity
-      }))
-      
+  const handleDelete = (invoice) => {
+    if (userRole !== 'owner') {
+      toast.error('غير مصرح لك بحذف الفواتير')
+      return
+    }
+    setInvoiceToDelete(invoice)
+    setDeleteConfirmOpen(true)
+  }
+
+  const confirmDelete = async () => {
+    if (!invoiceToDelete) return
+    try {
       const { error: itemsError } = await supabase
         .from('invoice_items')
-        .insert(items)
-      
+        .delete()
+        .eq('invoice_id', invoiceToDelete.id)
+
       if (itemsError) throw itemsError
-      
-      // تسجيل الدفعة
-      if (paid > 0) {
-        await supabase
-          .from('payments')
-          .insert([{
-            customer_id: finalCustomerId,
-            invoice_id: invoice.id,
-            amount: paid,
-            payment_method: 'نقدي',
-            collected_by: user.id
-          }])
-      }
-      
-      toast.success('تم حفظ الفاتورة بنجاح')
-      
-      // الطباعة
-      if (printAfterSave) {
-        const fullInvoice = {
-          ...invoice,
-          customer_name: customerName,
-          items: items
-        }
-        printThermalInvoice(fullInvoice)
-      }
-      
-      router.push('/dashboard/invoices')
-      router.refresh()
-      
+
+      const { error: invoiceError } = await supabase
+        .from('invoices')
+        .delete()
+        .eq('id', invoiceToDelete.id)
+
+      if (invoiceError) throw invoiceError
+
+      toast.success('تم حذف الفاتورة بنجاح')
+      setDeleteConfirmOpen(false)
+      setInvoiceToDelete(null)
+      fetchInvoices()
     } catch (error) {
-      console.error('Error saving invoice:', error)
-      toast.error('حدث خطأ في حفظ الفاتورة')
-    } finally {
-      setSaving(false)
+      console.error('Error deleting invoice:', error)
+      toast.error('حدث خطأ في حذف الفاتورة')
     }
   }
 
-  const { total, paid, remaining } = calculateTotals()
+  const getStatusBadge = (status) => {
+    switch (status) {
+      case 'paid': return <Badge variant="success">مدفوع</Badge>
+      case 'partial': return <Badge variant="warning">جزئي</Badge>
+      case 'unpaid': return <Badge variant="danger">غير مدفوع</Badge>
+      default: return <Badge variant="default">{status}</Badge>
+    }
+  }
+
+  const filteredInvoices = invoices.filter(inv => {
+    const matchSearch = !searchQuery ||
+      inv.invoice_number?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      inv.customer_name?.toLowerCase().includes(searchQuery.toLowerCase())
+    const matchStatus = filterStatus === 'all' || inv.payment_status === filterStatus
+    return matchSearch && matchStatus
+  })
+
+  const stats = {
+    total: invoices.length,
+    paid: invoices.filter(i => i.payment_status === 'paid').length,
+    partial: invoices.filter(i => i.payment_status === 'partial').length,
+    unpaid: invoices.filter(i => i.payment_status === 'unpaid').length,
+    totalAmount: invoices.reduce((s, i) => s + (i.total_amount || 0), 0),
+    totalRemaining: invoices.reduce((s, i) => s + (i.remaining_amount || 0), 0),
+  }
 
   if (loading) {
     return (
@@ -283,205 +155,217 @@ export default function NewInvoicePage() {
   }
 
   return (
-    <div className="space-y-4 sm:space-y-6 pb-safe">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <button
-          onClick={() => router.back()}
-          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-        >
-          <ArrowRight size={24} />
-        </button>
-        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">
-          إنشاء فاتورة جديدة
-        </h1>
+    <div className="space-y-4 sm:space-y-6">
+      {/* إحصائيات */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <Card padding={false} className="p-4 sm:p-6">
+          <p className="text-xs sm:text-sm text-gray-600">إجمالي الفواتير</p>
+          <p className="text-xl sm:text-2xl font-bold text-gray-900">{stats.total}</p>
+        </Card>
+        <Card padding={false} className="p-4 sm:p-6">
+          <p className="text-xs sm:text-sm text-gray-600">مدفوعة</p>
+          <p className="text-xl sm:text-2xl font-bold text-success-600">{stats.paid}</p>
+        </Card>
+        <Card padding={false} className="p-4 sm:p-6">
+          <p className="text-xs sm:text-sm text-gray-600">جزئية</p>
+          <p className="text-xl sm:text-2xl font-bold text-warning-600">{stats.partial}</p>
+        </Card>
+        <Card padding={false} className="p-4 sm:p-6">
+          <p className="text-xs sm:text-sm text-gray-600">إجمالي الديون</p>
+          <p className="text-lg sm:text-xl font-bold text-danger-600">{formatCurrency(stats.totalRemaining)}</p>
+        </Card>
       </div>
 
-      <Card title="بيانات العميل">
-        <div className="space-y-4">
-          {/* نوع العميل */}
-          <div className="flex gap-3 p-3 bg-gray-50 rounded-lg">
-            <button
-              onClick={() => setCustomerType('existing')}
-              className={`flex-1 px-4 py-2 rounded-lg font-medium transition-colors ${
-                customerType === 'existing'
-                  ? 'bg-primary-600 text-white'
-                  : 'bg-white text-gray-700 hover:bg-gray-100'
-              }`}
-            >
-              عميل مسجل
-            </button>
-            <button
-              onClick={() => setCustomerType('temporary')}
-              className={`flex-1 px-4 py-2 rounded-lg font-medium transition-colors ${
-                customerType === 'temporary'
-                  ? 'bg-primary-600 text-white'
-                  : 'bg-white text-gray-700 hover:bg-gray-100'
-              }`}
-            >
-              عميل مؤقت
-            </button>
-          </div>
-
-          {/* اختيار العميل */}
-          {customerType === 'existing' ? (
-            <Select
-              label="اختر العميل"
-              value={selectedCustomer}
-              onChange={(e) => setSelectedCustomer(e.target.value)}
-              options={customers.map(c => ({
-                value: c.id,
-                label: c.shop_name ? `${c.name} - ${c.shop_name}` : c.name
-              }))}
-              placeholder="اختر العميل"
-              required
-            />
-          ) : (
-            <Input
-              label="اسم العميل"
-              value={temporaryCustomerName}
-              onChange={(e) => setTemporaryCustomerName(e.target.value)}
-              placeholder="أدخل اسم العميل"
-              required
-            />
-          )}
-        </div>
-      </Card>
-
-      {/* المنتجات */}
-      <Card>
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-base sm:text-lg font-semibold text-gray-900">المنتجات</h3>
-          <Button onClick={addInvoiceItem} size="sm">
+      {/* قائمة الفواتير */}
+      <Card
+        title="الفواتير"
+        action={
+          <Button onClick={() => router.push('/dashboard/invoices/new')} size="sm">
             <Plus size={18} />
-            <span className="hidden sm:inline">إضافة منتج</span>
+            <span className="hidden sm:inline">فاتورة جديدة</span>
           </Button>
+        }
+      >
+        {/* فلاتر البحث */}
+        <div className="flex flex-col sm:flex-row gap-3 mb-4">
+          <div className="relative flex-1">
+            <Search size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="بحث برقم الفاتورة أو العميل..."
+              className="w-full pr-10 pl-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-primary-500 text-sm"
+            />
+          </div>
+          <select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-primary-500 text-sm bg-white appearance-none"
+          >
+            <option value="all">الكل</option>
+            <option value="paid">مدفوع</option>
+            <option value="partial">جزئي</option>
+            <option value="unpaid">غير مدفوع</option>
+          </select>
         </div>
 
-        <div className="space-y-3">
-          {invoiceItems.map((item, index) => (
-            <div key={item.id} className="bg-gray-50 p-3 sm:p-4 rounded-lg">
-              <div className="space-y-3">
-                <Select
-                  label="المنتج"
-                  value={item.product_id}
-                  onChange={(e) => updateInvoiceItem(item.id, 'product_id', e.target.value)}
-                  options={products.map(p => ({
-                    value: p.id,
-                    label: `${p.name} (متوفر: ${p.quantity})`
-                  }))}
-                  placeholder="اختر المنتج"
-                  required
-                />
+        {/* Desktop Table */}
+        <div className="hidden md:block overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-gray-200 bg-gray-50">
+                <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">رقم الفاتورة</th>
+                <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">العميل</th>
+                <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">الإجمالي</th>
+                <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">المدفوع</th>
+                <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">المتبقي</th>
+                <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">الحالة</th>
+                <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">التاريخ</th>
+                <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">إجراءات</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {filteredInvoices.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="text-center py-12 text-gray-500">
+                    لا توجد فواتير
+                  </td>
+                </tr>
+              ) : (
+                filteredInvoices.map((invoice) => (
+                  <tr key={invoice.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-4 py-3 font-semibold text-primary-600">#{invoice.invoice_number}</td>
+                    <td className="px-4 py-3 text-gray-900">{invoice.customer_name}</td>
+                    <td className="px-4 py-3 font-semibold">{formatCurrency(invoice.total_amount || 0)}</td>
+                    <td className="px-4 py-3 text-success-600">{formatCurrency(invoice.paid_amount || 0)}</td>
+                    <td className="px-4 py-3 text-danger-600">{formatCurrency(invoice.remaining_amount || 0)}</td>
+                    <td className="px-4 py-3">{getStatusBadge(invoice.payment_status)}</td>
+                    <td className="px-4 py-3 text-gray-500 text-sm">{formatDate(invoice.created_at)}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleView(invoice)}
+                          className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                          title="معاينة"
+                        >
+                          <Eye size={16} />
+                        </button>
+                        {userRole === 'owner' && (
+                          <>
+                            <button
+                              onClick={() => router.push(`/dashboard/invoices/${invoice.id}/edit`)}
+                              className="p-2 text-warning-600 hover:bg-warning-50 rounded-lg transition-colors"
+                              title="تعديل"
+                            >
+                              <Edit2 size={16} />
+                            </button>
+                            <button
+                              onClick={() => handleDelete(invoice)}
+                              className="p-2 text-danger-600 hover:bg-danger-50 rounded-lg transition-colors"
+                              title="حذف"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  <Input
-                    label="الكمية"
-                    type="number"
-                    value={item.quantity}
-                    onChange={(e) => updateInvoiceItem(item.id, 'quantity', parseInt(e.target.value) || 0)}
-                    min="1"
-                    max={item.available_quantity}
-                    required
-                  />
+        {/* Mobile Cards */}
+        <div className="md:hidden space-y-3">
+          {filteredInvoices.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">لا توجد فواتير</div>
+          ) : (
+            filteredInvoices.map((invoice) => (
+              <div key={invoice.id} className="bg-gray-50 rounded-lg p-4">
+                <div className="flex items-start justify-between mb-3">
+                  <div>
+                    <p className="font-bold text-primary-600">#{invoice.invoice_number}</p>
+                    <p className="text-sm text-gray-700 font-medium">{invoice.customer_name}</p>
+                    <p className="text-xs text-gray-500">{formatDate(invoice.created_at)}</p>
+                  </div>
+                  {getStatusBadge(invoice.payment_status)}
+                </div>
 
-                  <Input
-                    label="السعر"
-                    type="number"
-                    value={item.selling_price}
-                    onChange={(e) => updateInvoiceItem(item.id, 'selling_price', parseFloat(e.target.value) || 0)}
-                    step="0.01"
-                    required
-                  />
-
-                  <div className="col-span-2 sm:col-span-1">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      الإجمالي
-                    </label>
-                    <div className="px-4 py-2.5 bg-white border border-gray-300 rounded-lg text-gray-900 font-semibold">
-                      {formatCurrency(item.quantity * item.selling_price)}
-                    </div>
+                <div className="grid grid-cols-3 gap-2 text-sm mb-3">
+                  <div className="bg-white rounded-lg p-2 text-center">
+                    <p className="text-xs text-gray-500">الإجمالي</p>
+                    <p className="font-bold text-gray-900 text-xs">{formatCurrency(invoice.total_amount || 0)}</p>
+                  </div>
+                  <div className="bg-white rounded-lg p-2 text-center">
+                    <p className="text-xs text-gray-500">المدفوع</p>
+                    <p className="font-bold text-success-600 text-xs">{formatCurrency(invoice.paid_amount || 0)}</p>
+                  </div>
+                  <div className="bg-white rounded-lg p-2 text-center">
+                    <p className="text-xs text-gray-500">المتبقي</p>
+                    <p className="font-bold text-danger-600 text-xs">{formatCurrency(invoice.remaining_amount || 0)}</p>
                   </div>
                 </div>
 
-                <button
-                  onClick={() => removeInvoiceItem(item.id)}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2 text-danger-600 bg-danger-50 hover:bg-danger-100 rounded-lg transition-colors"
-                >
-                  <Trash2 size={18} />
-                  <span className="text-sm">حذف المنتج</span>
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleView(invoice)}
+                    className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-primary-600 bg-primary-50 hover:bg-primary-100 rounded-lg text-sm transition-colors"
+                  >
+                    <Eye size={15} />
+                    معاينة
+                  </button>
+                  {userRole === 'owner' && (
+                    <>
+                      <button
+                        onClick={() => router.push(`/dashboard/invoices/${invoice.id}/edit`)}
+                        className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-warning-600 bg-warning-50 hover:bg-warning-100 rounded-lg text-sm transition-colors"
+                      >
+                        <Edit2 size={15} />
+                        تعديل
+                      </button>
+                      <button
+                        onClick={() => handleDelete(invoice)}
+                        className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-danger-600 bg-danger-50 hover:bg-danger-100 rounded-lg text-sm transition-colors"
+                      >
+                        <Trash2 size={15} />
+                        حذف
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
-
-          {invoiceItems.length === 0 && (
-            <div className="text-center py-8 text-gray-500 text-sm">
-              لم تقم بإضافة أي منتجات بعد
-            </div>
+            ))
           )}
         </div>
       </Card>
 
-      {/* ملاحظات */}
-      <Card>
-        <Input
-          label="ملاحظات (اختياري)"
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          placeholder="أي ملاحظات على الفاتورة..."
+      {/* InvoicePreview Modal */}
+      {previewInvoice && (
+        <InvoicePreview
+          invoice={previewInvoice}
+          onClose={() => setPreviewInvoice(null)}
+          onPrint={() => {
+            printThermalInvoice(previewInvoice)
+            setPreviewInvoice(null)
+          }}
         />
-      </Card>
+      )}
 
-      {/* الإجماليات */}
-      <Card>
-        <div className="bg-primary-50 p-4 sm:p-6 rounded-lg space-y-3">
-          <div className="flex justify-between items-center text-base sm:text-lg">
-            <span className="font-medium text-gray-700">الإجمالي:</span>
-            <span className="font-bold text-gray-900">{formatCurrency(total)}</span>
-          </div>
-
-          <Input
-            label="المبلغ المدفوع"
-            type="number"
-            value={paidAmount}
-            onChange={(e) => setPaidAmount(e.target.value)}
-            placeholder="0.00"
-            step="0.01"
-            max={total}
-          />
-
-          <div className="flex justify-between items-center text-lg sm:text-xl pt-3 border-t border-primary-200">
-            <span className="font-bold text-gray-700">المتبقي:</span>
-            <span className={`font-bold ${remaining > 0 ? 'text-danger-600' : 'text-success-600'}`}>
-              {formatCurrency(remaining)}
-            </span>
-          </div>
-        </div>
-      </Card>
-
-      {/* أزرار الحفظ */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <Button
-          onClick={() => handleSaveInvoice(true)}
-          variant="primary"
-          fullWidth
-          disabled={saving}
-        >
-          <Printer size={20} />
-          {saving ? 'جاري الحفظ...' : 'حفظ وطباعة'}
-        </Button>
-
-        <Button
-          onClick={() => handleSaveInvoice(false)}
-          variant="secondary"
-          fullWidth
-          disabled={saving}
-        >
-          <Save size={20} />
-          حفظ فقط
-        </Button>
-      </div>
+      {/* Confirm Delete */}
+      <ConfirmDialog
+        isOpen={deleteConfirmOpen}
+        onClose={() => {
+          setDeleteConfirmOpen(false)
+          setInvoiceToDelete(null)
+        }}
+        onConfirm={confirmDelete}
+        title="حذف الفاتورة"
+        message={`هل أنت متأكد من حذف الفاتورة #${invoiceToDelete?.invoice_number}؟ لا يمكن التراجع عن هذا الإجراء.`}
+        confirmText="حذف الفاتورة"
+      />
     </div>
   )
 }
