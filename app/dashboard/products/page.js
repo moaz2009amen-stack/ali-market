@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { saveToCache, getFromCache, isOnline } from '@/lib/offline/offlineDb'
 import Card from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
 import Table from '@/components/ui/Table'
@@ -10,7 +11,7 @@ import Select from '@/components/ui/Select'
 import Badge from '@/components/ui/Badge'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
-import { Plus, Edit2, Trash2, Package, AlertTriangle } from 'lucide-react'
+import { Plus, Edit2, Trash2, Package, AlertTriangle, WifiOff } from 'lucide-react'
 import { formatCurrency, formatNumber } from '@/lib/utils/format'
 import toast from 'react-hot-toast'
 
@@ -18,6 +19,7 @@ export default function ProductsPage() {
   const supabase = createClient()
   const [products, setProducts] = useState([])
   const [loading, setLoading] = useState(true)
+  const [offline, setOffline] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editMode, setEditMode] = useState(false)
   const [currentProduct, setCurrentProduct] = useState(null)
@@ -50,20 +52,65 @@ export default function ProductsPage() {
     { value: 'شكارة', label: 'شكارة' },
   ]
 
-  useEffect(() => { fetchProducts() }, [])
+  useEffect(() => {
+    fetchProducts()
+
+    // مراقبة حالة الاتصال
+    const handleOnline = () => {
+      setOffline(false)
+      fetchProducts()
+      toast.success('تم استعادة الاتصال بالإنترنت')
+    }
+    const handleOffline = () => setOffline(true)
+
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
+  }, [])
 
   async function fetchProducts() {
+    // لو مفيش نت، جيب من الـ cache
+    if (!isOnline()) {
+      setOffline(true)
+      const cached = await getFromCache('products')
+      if (cached.length > 0) {
+        setProducts(cached.filter(p => p.is_active))
+        toast('📱 عرض البيانات المحفوظة', { icon: '📡' })
+      }
+      setLoading(false)
+      return
+    }
+
     try {
       const { data, error } = await supabase
         .from('products')
         .select('*')
-        .eq('is_active', true)  // ✅ فلتر المنتجات الفعالة فقط
+        .eq('is_active', true)
         .order('name')
+
       if (error) throw error
-      setProducts(data || [])
+
+      const result = data || []
+      setProducts(result)
+      setOffline(false)
+
+      // ✅ احفظ في الـ cache المحلي
+      await saveToCache('products', result)
+
     } catch (error) {
       console.error('fetchProducts error:', error)
-      toast.error('حدث خطأ في تحميل المنتجات')
+      // جرب من الـ cache
+      const cached = await getFromCache('products')
+      if (cached.length > 0) {
+        setProducts(cached.filter(p => p.is_active))
+        setOffline(true)
+        toast('📱 عرض البيانات المحفوظة', { icon: '📡' })
+      } else {
+        toast.error('حدث خطأ في تحميل المنتجات')
+      }
     } finally {
       setLoading(false)
     }
@@ -88,6 +135,7 @@ export default function ProductsPage() {
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!validate()) return
+    if (offline) { toast.error('لا يمكن الحفظ بدون إنترنت'); return }
 
     try {
       const { data: { user } } = await supabase.auth.getUser()
@@ -107,12 +155,16 @@ export default function ProductsPage() {
         const { error } = await supabase.from('products').update(productData).eq('id', currentProduct.id)
         if (error) throw error
         toast.success('تم تحديث المنتج بنجاح')
-        setProducts(prev => prev.map(p => p.id === currentProduct.id ? { ...p, ...productData } : p))
+        const updated = products.map(p => p.id === currentProduct.id ? { ...p, ...productData } : p)
+        setProducts(updated)
+        await saveToCache('products', updated)
       } else {
         const { data, error } = await supabase.from('products').insert([{ ...productData, created_by: user.id }]).select().single()
         if (error) throw error
         toast.success('تم إضافة المنتج بنجاح')
-        setProducts(prev => [...prev, data])
+        const updated = [...products, data]
+        setProducts(updated)
+        await saveToCache('products', updated)
       }
       closeModal()
     } catch (error) {
@@ -122,6 +174,7 @@ export default function ProductsPage() {
   }
 
   const handleEdit = (product) => {
+    if (offline) { toast.error('لا يمكن التعديل بدون إنترنت'); return }
     setCurrentProduct(product)
     setFormData({
       name: product.name || '',
@@ -138,6 +191,7 @@ export default function ProductsPage() {
   }
 
   const handleDelete = (product) => {
+    if (offline) { toast.error('لا يمكن الحذف بدون إنترنت'); return }
     setProductToDelete(product)
     setDeleteConfirmOpen(true)
   }
@@ -145,40 +199,30 @@ export default function ProductsPage() {
   const confirmDelete = async () => {
     if (!productToDelete || deleting) return
     setDeleting(true)
-
     try {
-      // ✅ محاولة الحذف الفعلي أولاً
-      const { error: deleteError } = await supabase
-        .from('products')
-        .delete()
-        .eq('id', productToDelete.id)
+      const { error: deleteError } = await supabase.from('products').delete().eq('id', productToDelete.id)
 
       if (!deleteError) {
-        // ✅ نجح الحذف الفعلي
-        setProducts(prev => prev.filter(p => p.id !== productToDelete.id))
+        const updated = products.filter(p => p.id !== productToDelete.id)
+        setProducts(updated)
+        await saveToCache('products', updated)
         toast.success('تم حذف المنتج بنجاح')
         setDeleteConfirmOpen(false)
         setProductToDelete(null)
         return
       }
 
-      // لو فشل بسبب foreign key (مرتبط بفواتير)
       if (deleteError.message?.includes('foreign key') || deleteError.message?.includes('violates')) {
-        // ✅ Soft delete - إخفاء المنتج بدلاً من حذفه
-        const { error: softError } = await supabase
-          .from('products')
-          .update({ is_active: false })
-          .eq('id', productToDelete.id)
-
+        const { error: softError } = await supabase.from('products').update({ is_active: false }).eq('id', productToDelete.id)
         if (softError) throw softError
-
-        setProducts(prev => prev.filter(p => p.id !== productToDelete.id))
+        const updated = products.filter(p => p.id !== productToDelete.id)
+        setProducts(updated)
+        await saveToCache('products', updated)
         toast.success('تم حذف المنتج بنجاح')
         setDeleteConfirmOpen(false)
         setProductToDelete(null)
         return
       }
-
       throw deleteError
     } catch (error) {
       console.error('Delete product error:', error)
@@ -205,8 +249,7 @@ export default function ProductsPage() {
 
   const columns = [
     {
-      header: 'المنتج',
-      accessor: 'name',
+      header: 'المنتج', accessor: 'name',
       render: (row) => (
         <div>
           <p className="font-semibold text-gray-900">{row.name}</p>
@@ -214,19 +257,10 @@ export default function ProductsPage() {
         </div>
       )
     },
+    { header: 'سعر الشراء', accessor: 'cost_price', render: (row) => <span className="text-sm">{formatCurrency(row.cost_price)}</span> },
+    { header: 'سعر البيع', accessor: 'selling_price', render: (row) => <span className="font-semibold">{formatCurrency(row.selling_price)}</span> },
     {
-      header: 'سعر الشراء',
-      accessor: 'cost_price',
-      render: (row) => <span className="text-sm">{formatCurrency(row.cost_price)}</span>
-    },
-    {
-      header: 'سعر البيع',
-      accessor: 'selling_price',
-      render: (row) => <span className="font-semibold">{formatCurrency(row.selling_price)}</span>
-    },
-    {
-      header: 'الكمية',
-      accessor: 'quantity',
+      header: 'الكمية', accessor: 'quantity',
       render: (row) => (
         <div className="flex items-center gap-1">
           {row.quantity <= (row.min_stock || 10) && <AlertTriangle size={14} className="text-danger-500" />}
@@ -237,8 +271,7 @@ export default function ProductsPage() {
       )
     },
     {
-      header: 'الحالة',
-      accessor: 'status',
+      header: 'الحالة', accessor: 'status',
       render: (row) => (
         <Badge variant={row.quantity > (row.min_stock || 10) ? 'success' : 'danger'}>
           {row.quantity > (row.min_stock || 10) ? 'متوفر' : 'منخفض'}
@@ -246,16 +279,11 @@ export default function ProductsPage() {
       )
     },
     {
-      header: 'إجراءات',
-      accessor: 'actions',
+      header: 'إجراءات', accessor: 'actions',
       render: (row) => (
         <div className="flex items-center gap-1">
-          <button onClick={() => handleEdit(row)} className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors">
-            <Edit2 size={16} />
-          </button>
-          <button onClick={() => handleDelete(row)} className="p-2 text-danger-600 hover:bg-danger-50 rounded-lg transition-colors">
-            <Trash2 size={16} />
-          </button>
+          <button onClick={() => handleEdit(row)} className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"><Edit2 size={16} /></button>
+          <button onClick={() => handleDelete(row)} className="p-2 text-danger-600 hover:bg-danger-50 rounded-lg transition-colors"><Trash2 size={16} /></button>
         </div>
       )
     },
@@ -267,12 +295,21 @@ export default function ProductsPage() {
     totalValue: products.reduce((sum, p) => sum + ((p.quantity || 0) * (p.cost_price || 0)), 0)
   }
 
-  if (loading) {
-    return <div className="flex items-center justify-center min-h-[60vh]"><LoadingSpinner size="lg" /></div>
-  }
+  if (loading) return <div className="flex items-center justify-center min-h-[60vh]"><LoadingSpinner size="lg" /></div>
 
   return (
     <div className="space-y-4 sm:space-y-6">
+
+      {/* شريط تنبيه Offline */}
+      {offline && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 flex items-center gap-3">
+          <WifiOff size={18} className="text-yellow-600 flex-shrink-0" />
+          <p className="text-yellow-800 text-sm font-medium">
+            أنت غير متصل - عرض آخر بيانات محفوظة على الجهاز
+          </p>
+        </div>
+      )}
+
       {/* إحصائيات */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
         <Card padding={false} className="p-4 sm:p-6">
@@ -314,18 +351,17 @@ export default function ProductsPage() {
       <Card
         title="المنتجات"
         action={
-          <Button onClick={openModal} size="sm">
-            <Plus size={18} />
-            <span className="hidden sm:inline">إضافة منتج</span>
-          </Button>
+          !offline && (
+            <Button onClick={openModal} size="sm">
+              <Plus size={18} />
+              <span className="hidden sm:inline">إضافة منتج</span>
+            </Button>
+          )
         }
       >
-        {/* Desktop */}
         <div className="hidden md:block">
           <Table columns={columns} data={products} loading={loading} emptyMessage="لا توجد منتجات" />
         </div>
-
-        {/* Mobile Cards */}
         <div className="md:hidden space-y-3">
           {products.length === 0 ? (
             <div className="text-center py-8 text-gray-500">لا توجد منتجات</div>
@@ -357,56 +393,45 @@ export default function ProductsPage() {
                     </p>
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <button onClick={() => handleEdit(product)}
-                    className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-primary-600 bg-primary-50 hover:bg-primary-100 rounded-lg text-sm transition-colors">
-                    <Edit2 size={15} />تعديل
-                  </button>
-                  <button onClick={() => handleDelete(product)}
-                    className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-danger-600 bg-danger-50 hover:bg-danger-100 rounded-lg text-sm transition-colors">
-                    <Trash2 size={15} />حذف
-                  </button>
-                </div>
+                {!offline && (
+                  <div className="flex gap-2">
+                    <button onClick={() => handleEdit(product)} className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-primary-600 bg-primary-50 hover:bg-primary-100 rounded-lg text-sm transition-colors">
+                      <Edit2 size={15} />تعديل
+                    </button>
+                    <button onClick={() => handleDelete(product)} className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-danger-600 bg-danger-50 hover:bg-danger-100 rounded-lg text-sm transition-colors">
+                      <Trash2 size={15} />حذف
+                    </button>
+                  </div>
+                )}
               </div>
             ))
           )}
         </div>
       </Card>
 
-      {/* Modal إضافة/تعديل */}
       <Modal isOpen={modalOpen} onClose={closeModal} title={editMode ? 'تعديل منتج' : 'إضافة منتج جديد'} size="lg">
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Input label="اسم المنتج" name="name" value={formData.name} onChange={handleChange}
-              placeholder="مثال: شيبسي ليز كبير" required error={errors.name} />
-            <Select label="الفئة" name="category" value={formData.category} onChange={handleChange}
-              options={categories} placeholder="اختر الفئة" />
+            <Input label="اسم المنتج" name="name" value={formData.name} onChange={handleChange} placeholder="مثال: شيبسي ليز كبير" required error={errors.name} />
+            <Select label="الفئة" name="category" value={formData.category} onChange={handleChange} options={categories} placeholder="اختر الفئة" />
           </div>
           <div className="grid grid-cols-2 gap-4">
-            <Input label="سعر الشراء (جنيه)" type="number" name="cost_price" value={formData.cost_price}
-              onChange={handleChange} placeholder="0.00" step="0.01" required error={errors.cost_price} />
-            <Input label="سعر البيع (جنيه)" type="number" name="selling_price" value={formData.selling_price}
-              onChange={handleChange} placeholder="0.00" step="0.01" required error={errors.selling_price} />
+            <Input label="سعر الشراء (جنيه)" type="number" name="cost_price" value={formData.cost_price} onChange={handleChange} placeholder="0.00" step="0.01" required error={errors.cost_price} />
+            <Input label="سعر البيع (جنيه)" type="number" name="selling_price" value={formData.selling_price} onChange={handleChange} placeholder="0.00" step="0.01" required error={errors.selling_price} />
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-            <Input label="الكمية" type="number" name="quantity" value={formData.quantity}
-              onChange={handleChange} placeholder="0" required error={errors.quantity} />
-            <Input label="الحد الأدنى" type="number" name="min_stock" value={formData.min_stock}
-              onChange={handleChange} placeholder="10" />
+            <Input label="الكمية" type="number" name="quantity" value={formData.quantity} onChange={handleChange} placeholder="0" required error={errors.quantity} />
+            <Input label="الحد الأدنى" type="number" name="min_stock" value={formData.min_stock} onChange={handleChange} placeholder="10" />
             <Select label="الوحدة" name="unit" value={formData.unit} onChange={handleChange} options={units} />
           </div>
-          <Input label="الباركود (اختياري)" name="barcode" value={formData.barcode}
-            onChange={handleChange} placeholder="الباركود" />
+          <Input label="الباركود (اختياري)" name="barcode" value={formData.barcode} onChange={handleChange} placeholder="الباركود" />
           <div className="flex gap-3 pt-2">
-            <Button type="submit" variant="primary" fullWidth>
-              {editMode ? 'تحديث المنتج' : 'إضافة المنتج'}
-            </Button>
+            <Button type="submit" variant="primary" fullWidth>{editMode ? 'تحديث المنتج' : 'إضافة المنتج'}</Button>
             <Button type="button" variant="secondary" fullWidth onClick={closeModal}>إلغاء</Button>
           </div>
         </form>
       </Modal>
 
-      {/* Confirm Delete */}
       <ConfirmDialog
         isOpen={deleteConfirmOpen}
         onClose={() => { if (!deleting) { setDeleteConfirmOpen(false); setProductToDelete(null) } }}
