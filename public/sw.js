@@ -1,112 +1,106 @@
-const CACHE_NAME = 'jamlat-abu-ali-v2'
-const STATIC_CACHE = 'static-v2'
-const DATA_CACHE = 'data-v2'
+const CACHE_VERSION = 'v3'
+const CACHE_NAME = `jamlat-abu-ali-${CACHE_VERSION}`
 
-// الملفات الأساسية للـ Offline
-const STATIC_FILES = [
-  '/',
-  '/login',
-  '/dashboard',
-  '/manifest.json',
-  '/icon-192.png',
-  '/icon-512.png',
-  '/favicon.ico',
-]
-
-// ===== Install =====
 self.addEventListener('install', (event) => {
-  console.log('[SW] Installing...')
+  console.log('[SW] Installing version', CACHE_VERSION)
   event.waitUntil(
-    caches.open(STATIC_CACHE).then((cache) => {
-      console.log('[SW] Caching static files')
-      return cache.addAll(STATIC_FILES).catch(err => {
-        console.log('[SW] Cache addAll error (non-fatal):', err)
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.addAll(['/manifest.json']).catch(err => {
+        console.log('[SW] Install cache error (non-fatal):', err)
       })
     })
   )
   self.skipWaiting()
 })
 
-// ===== Activate =====
 self.addEventListener('activate', (event) => {
-  console.log('[SW] Activating...')
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames
-          .filter(name => name !== STATIC_CACHE && name !== DATA_CACHE)
-          .map(name => {
-            console.log('[SW] Deleting old cache:', name)
-            return caches.delete(name)
-          })
+          .filter(name => name.startsWith('jamlat-abu-ali-') && name !== CACHE_NAME)
+          .map(name => caches.delete(name))
       )
-    })
+    }).then(() => self.clients.claim())
   )
-  self.clients.claim()
 })
 
-// ===== Fetch =====
 self.addEventListener('fetch', (event) => {
   const { request } = event
   const url = new URL(request.url)
 
-  // تجاهل طلبات غير GET
   if (request.method !== 'GET') return
+  if (!url.protocol.startsWith('http')) return
 
-  // تجاهل طلبات Supabase - دايماً من الإنترنت
+  // Supabase: Network Only
   if (url.hostname.includes('supabase.co')) {
     event.respondWith(
-      fetch(request).catch(() => {
-        return new Response(
-          JSON.stringify({ error: 'offline', message: 'لا يوجد اتصال بالإنترنت' }),
-          { status: 503, headers: { 'Content-Type': 'application/json' } }
-        )
+      fetch(request).catch(() => new Response(
+        JSON.stringify({ error: 'offline' }),
+        { status: 503, headers: { 'Content-Type': 'application/json' } }
+      ))
+    )
+    return
+  }
+
+  // ملفات ثابتة: Cache First
+  if (
+    url.pathname.startsWith('/_next/static/') ||
+    url.pathname.match(/\.(png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|css)$/)
+  ) {
+    event.respondWith(
+      caches.match(request).then(cached => {
+        if (cached) return cached
+        return fetch(request).then(response => {
+          if (response.ok) {
+            caches.open(CACHE_NAME).then(cache => cache.put(request, response.clone()))
+          }
+          return response
+        }).catch(() => new Response('', { status: 404 }))
       })
     )
     return
   }
 
-  // تجاهل ملفات Next.js الداخلية
+  // ملفات _next الأخرى: Stale While Revalidate
   if (url.pathname.startsWith('/_next/')) {
     event.respondWith(
-      caches.match(request).then(cached => cached || fetch(request).then(response => {
-        const clone = response.clone()
-        caches.open(STATIC_CACHE).then(cache => cache.put(request, clone))
-        return response
-      }).catch(() => cached))
+      caches.match(request).then(cached => {
+        const fetchPromise = fetch(request).then(response => {
+          if (response.ok) {
+            caches.open(CACHE_NAME).then(cache => cache.put(request, response.clone()))
+          }
+          return response
+        }).catch(() => cached)
+        return cached || fetchPromise
+      })
     )
     return
   }
 
-  // الصفحات - Network First مع Fallback للـ Cache
+  // الصفحات: Network First مع Cache Fallback
   event.respondWith(
     fetch(request)
       .then(response => {
-        // حفظ نسخة في الـ cache
-        if (response.ok) {
-          const clone = response.clone()
-          caches.open(STATIC_CACHE).then(cache => cache.put(request, clone))
+        if (response.ok && response.type !== 'opaque') {
+          caches.open(CACHE_NAME).then(cache => cache.put(request, response.clone()))
         }
         return response
       })
       .catch(() => {
-        // لو مفيش إنترنت، رجّع من الـ cache
         return caches.match(request).then(cached => {
           if (cached) return cached
-          // لو مش موجود في الـ cache، رجّع صفحة offline
           if (request.mode === 'navigate') {
-            return caches.match('/').then(home => home || new Response(
-              getOfflinePage(),
-              { headers: { 'Content-Type': 'text/html; charset=utf-8' } }
-            ))
+            return caches.match('/').then(root => root || new Response(getOfflinePage(), {
+              headers: { 'Content-Type': 'text/html; charset=utf-8' }
+            }))
           }
-          return new Response('Offline', { status: 503 })
+          return new Response('', { status: 503 })
         })
       })
   )
 })
 
-// ===== صفحة Offline =====
 function getOfflinePage() {
   return `<!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -115,47 +109,40 @@ function getOfflinePage() {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>جملة أبو علي - غير متصل</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: Arial, sans-serif;
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: #f8fafc;
-      direction: rtl;
-    }
-    .container {
-      text-align: center;
-      padding: 2rem;
-      max-width: 400px;
-    }
-    .icon {
-      width: 80px; height: 80px;
-      background: #dbeafe;
-      border-radius: 50%;
-      display: flex; align-items: center; justify-content: center;
-      margin: 0 auto 1.5rem;
-      font-size: 2rem;
-    }
-    h1 { font-size: 1.5rem; color: #1e40af; margin-bottom: 0.5rem; }
-    p { color: #64748b; margin-bottom: 1.5rem; line-height: 1.6; }
-    button {
-      background: #2563eb; color: white;
-      border: none; padding: 0.75rem 2rem;
-      border-radius: 0.5rem; font-size: 1rem;
-      cursor: pointer; width: 100%;
-    }
-    button:hover { background: #1d4ed8; }
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#eff6ff,#dbeafe);direction:rtl;padding:1rem}
+    .card{background:#fff;border-radius:1.5rem;padding:2.5rem 2rem;text-align:center;max-width:380px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.1)}
+    .logo{width:72px;height:72px;background:#2563eb;border-radius:1rem;display:flex;align-items:center;justify-content:center;margin:0 auto 1.5rem;font-size:2rem}
+    h1{font-size:1.5rem;color:#1e3a8a;margin-bottom:.5rem;font-weight:700}
+    .sub{color:#64748b;font-size:.85rem;margin-bottom:1.5rem}
+    .alert{background:#fef3c7;border:1px solid #fde68a;border-radius:.75rem;padding:1rem;margin-bottom:1.5rem}
+    .alert p{color:#92400e;font-size:.9rem;line-height:1.6}
+    .btn{display:block;width:100%;background:#2563eb;color:#fff;border:none;padding:.875rem;border-radius:.75rem;font-size:1rem;font-weight:600;cursor:pointer;margin-bottom:.75rem;font-family:inherit;transition:background .2s}
+    .btn:hover{background:#1d4ed8}
+    .btn2{background:transparent;color:#2563eb;border:2px solid #2563eb}
+    .btn2:hover{background:#eff6ff}
+    .status{display:flex;align-items:center;justify-content:center;gap:.5rem;margin-top:1.5rem;font-size:.8rem;color:#94a3b8}
+    .dot{width:8px;height:8px;background:#ef4444;border-radius:50%;animation:pulse 1.5s infinite}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="icon">📡</div>
+  <div class="card">
+    <div class="logo">🛒</div>
     <h1>جملة أبو علي</h1>
-    <p>لا يوجد اتصال بالإنترنت حالياً.<br>تحقق من اتصالك وحاول مرة أخرى.</p>
-    <button onclick="location.reload()">إعادة المحاولة</button>
+    <p class="sub">نظام إدارة المخزن والمبيعات</p>
+    <div class="alert">
+      <p>📡 لا يوجد اتصال بالإنترنت حالياً</p>
+      <p>تحقق من الاتصال وحاول مرة أخرى</p>
+    </div>
+    <button class="btn" onclick="location.reload()">🔄 إعادة المحاولة</button>
+    <button class="btn btn2" onclick="location.href='/dashboard'">📱 فتح الصفحة المحفوظة</button>
+    <div class="status"><div class="dot"></div><span>غير متصل</span></div>
   </div>
+  <script>
+    window.addEventListener('online', () => location.reload())
+    setInterval(() => { if(navigator.onLine) location.reload() }, 5000)
+  </script>
 </body>
 </html>`
 }
