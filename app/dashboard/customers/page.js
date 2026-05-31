@@ -6,7 +6,6 @@ import Button from '@/components/ui/Button'
 import Table from '@/components/ui/Table'
 import Modal from '@/components/ui/Modal'
 import Input from '@/components/ui/Input'
-import Badge from '@/components/ui/Badge'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { Plus, Edit2, Trash2, Users, DollarSign, Phone } from 'lucide-react'
@@ -22,32 +21,24 @@ export default function CustomersPage() {
   const [currentCustomer, setCurrentCustomer] = useState(null)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [customerToDelete, setCustomerToDelete] = useState(null)
+  const [deleting, setDeleting] = useState(false)
   const [formData, setFormData] = useState({
-    name: '',
-    phone: '',
-    address: '',
-    area: '',
-    notes: ''
+    name: '', phone: '', address: '', area: ''
   })
   const [errors, setErrors] = useState({})
 
-  useEffect(() => {
-    fetchCustomers()
-  }, [])
+  useEffect(() => { fetchCustomers() }, [])
 
   async function fetchCustomers() {
     try {
       const { data, error } = await supabase
         .from('customers')
         .select('*')
-        // ✅ فلتر العملاء الدائمين فقط (is_active = true)
         .eq('is_active', true)
-        .order('created_at', { ascending: false })
-
+        .order('name')
       if (error) throw error
       setCustomers(data || [])
     } catch (error) {
-      console.error('Error fetching customers:', error)
       toast.error('حدث خطأ في تحميل العملاء')
     } finally {
       setLoading(false)
@@ -57,9 +48,7 @@ export default function CustomersPage() {
   const handleChange = (e) => {
     const { name, value } = e.target
     setFormData(prev => ({ ...prev, [name]: value }))
-    if (errors[name]) {
-      setErrors(prev => ({ ...prev, [name]: '' }))
-    }
+    if (errors[name]) setErrors(prev => ({ ...prev, [name]: '' }))
   }
 
   const validate = () => {
@@ -67,7 +56,7 @@ export default function CustomersPage() {
     if (!formData.name.trim()) newErrors.name = 'اسم العميل مطلوب'
     if (!formData.phone.trim()) newErrors.phone = 'رقم الهاتف مطلوب'
     else if (!/^01[0-9]{9}$/.test(formData.phone.replace(/\s/g, ''))) {
-      newErrors.phone = 'رقم الهاتف غير صحيح (مثال: 01001234567)'
+      newErrors.phone = 'رقم الهاتف غير صحيح'
     }
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
@@ -76,28 +65,22 @@ export default function CustomersPage() {
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!validate()) return
-
     try {
       const { data: { user } } = await supabase.auth.getUser()
       const customerData = {
-        name: formData.name,
-        phone: formData.phone,
-        address: formData.address,
-        area: formData.area,
+        name: formData.name.trim(),
+        phone: formData.phone.trim(),
+        address: formData.address || null,
+        area: formData.area || null,
         is_active: true
       }
 
       if (editMode && currentCustomer) {
-        const { error } = await supabase
-          .from('customers')
-          .update(customerData)
-          .eq('id', currentCustomer.id)
+        const { error } = await supabase.from('customers').update(customerData).eq('id', currentCustomer.id)
         if (error) throw error
         toast.success('تم تحديث العميل بنجاح')
       } else {
-        const { error } = await supabase
-          .from('customers')
-          .insert([{ ...customerData, created_by: user.id }])
+        const { error } = await supabase.from('customers').insert([{ ...customerData, created_by: user.id }])
         if (error) throw error
         toast.success('تم إضافة العميل بنجاح')
       }
@@ -106,22 +89,17 @@ export default function CustomersPage() {
       closeModal()
     } catch (error) {
       console.error('Error saving customer:', error)
-      if (error.message?.includes('duplicate') || error.message?.includes('unique')) {
-        toast.error('رقم الهاتف مسجل مسبقاً')
-      } else {
-        toast.error('حدث خطأ في حفظ العميل')
-      }
+      toast.error('حدث خطأ في حفظ العميل')
     }
   }
 
   const handleEdit = (customer) => {
     setCurrentCustomer(customer)
     setFormData({
-      name: customer.name,
-      phone: customer.phone,
+      name: customer.name || '',
+      phone: customer.phone || '',
       address: customer.address || '',
-      area: customer.area || '',
-      notes: customer.notes || ''
+      area: customer.area || ''
     })
     setEditMode(true)
     setModalOpen(true)
@@ -133,27 +111,60 @@ export default function CustomersPage() {
   }
 
   const confirmDelete = async () => {
-    if (!customerToDelete) return
+    if (!customerToDelete || deleting) return
+    setDeleting(true)
+
     try {
-      const { error } = await supabase
+      // ✅ الطريقة الصحيحة: Soft Delete (is_active = false)
+      // بدل الحذف الكامل لأن العميل ممكن يكون مرتبط بفواتير
+      const { error: softDeleteError } = await supabase
+        .from('customers')
+        .update({ is_active: false })
+        .eq('id', customerToDelete.id)
+
+      if (!softDeleteError) {
+        toast.success('تم حذف العميل بنجاح')
+        setDeleteConfirmOpen(false)
+        setCustomerToDelete(null)
+        // إزالة من القائمة المحلية فوراً
+        setCustomers(prev => prev.filter(c => c.id !== customerToDelete.id))
+        return
+      }
+
+      // لو فشل الـ soft delete، جرب الحذف الكامل
+      console.log('Soft delete failed, trying hard delete...')
+
+      // حذف الدفعات المرتبطة
+      await supabase.from('payments').delete().eq('customer_id', customerToDelete.id)
+
+      // فك ارتباط الفواتير (set customer_id = null)
+      await supabase.from('invoices').update({ customer_id: null }).eq('customer_id', customerToDelete.id)
+
+      // حذف العميل
+      const { error: deleteError } = await supabase
         .from('customers')
         .delete()
         .eq('id', customerToDelete.id)
-      if (error) throw error
+
+      if (deleteError) throw deleteError
+
       toast.success('تم حذف العميل بنجاح')
       setDeleteConfirmOpen(false)
       setCustomerToDelete(null)
-      fetchCustomers()
+      setCustomers(prev => prev.filter(c => c.id !== customerToDelete.id))
+
     } catch (error) {
-      console.error('Error deleting customer:', error)
-      toast.error('لا يمكن حذف العميل لوجود فواتير مرتبطة به')
+      console.error('Delete error:', error)
+      toast.error('حدث خطأ في حذف العميل')
+    } finally {
+      setDeleting(false)
     }
   }
 
   const openModal = () => {
     setEditMode(false)
     setCurrentCustomer(null)
-    setFormData({ name: '', phone: '', address: '', area: '', notes: '' })
+    setFormData({ name: '', phone: '', address: '', area: '' })
     setErrors({})
     setModalOpen(true)
   }
@@ -200,16 +211,10 @@ export default function CustomersPage() {
       accessor: 'actions',
       render: (row) => (
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => handleEdit(row)}
-            className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
-          >
+          <button onClick={() => handleEdit(row)} className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors">
             <Edit2 size={16} />
           </button>
-          <button
-            onClick={() => handleDelete(row)}
-            className="p-2 text-danger-600 hover:bg-danger-50 rounded-lg transition-colors"
-          >
+          <button onClick={() => handleDelete(row)} className="p-2 text-danger-600 hover:bg-danger-50 rounded-lg transition-colors">
             <Trash2 size={16} />
           </button>
         </div>
@@ -217,7 +222,6 @@ export default function CustomersPage() {
     },
   ]
 
-  // إحصائيات
   const stats = {
     total: customers.length,
     withDebt: customers.filter(c => (c.total_debt || 0) > 0).length,
@@ -225,11 +229,7 @@ export default function CustomersPage() {
   }
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <LoadingSpinner size="lg" />
-      </div>
-    )
+    return <div className="flex items-center justify-center min-h-[60vh]"><LoadingSpinner size="lg" /></div>
   }
 
   return (
@@ -283,12 +283,7 @@ export default function CustomersPage() {
       >
         {/* Desktop */}
         <div className="hidden md:block">
-          <Table
-            columns={columns}
-            data={customers}
-            loading={loading}
-            emptyMessage="لا يوجد عملاء. ابدأ بإضافة عميل جديد!"
-          />
+          <Table columns={columns} data={customers} loading={loading} emptyMessage="لا يوجد عملاء" />
         </div>
 
         {/* Mobile Cards */}
@@ -312,19 +307,13 @@ export default function CustomersPage() {
                   <span className="text-sm font-mono">{formatPhone(customer.phone)}</span>
                 </div>
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => handleEdit(customer)}
-                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-primary-600 bg-primary-50 hover:bg-primary-100 rounded-lg transition-colors"
-                  >
-                    <Edit2 size={15} />
-                    <span className="text-sm">تعديل</span>
+                  <button onClick={() => handleEdit(customer)}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-primary-600 bg-primary-50 hover:bg-primary-100 rounded-lg text-sm transition-colors">
+                    <Edit2 size={15} /><span>تعديل</span>
                   </button>
-                  <button
-                    onClick={() => handleDelete(customer)}
-                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-danger-600 bg-danger-50 hover:bg-danger-100 rounded-lg transition-colors"
-                  >
-                    <Trash2 size={15} />
-                    <span className="text-sm">حذف</span>
+                  <button onClick={() => handleDelete(customer)}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-danger-600 bg-danger-50 hover:bg-danger-100 rounded-lg text-sm transition-colors">
+                    <Trash2 size={15} /><span>حذف</span>
                   </button>
                 </div>
               </div>
@@ -333,54 +322,20 @@ export default function CustomersPage() {
         </div>
       </Card>
 
-      {/* Modal إضافة/تعديل */}
-      <Modal
-        isOpen={modalOpen}
-        onClose={closeModal}
-        title={editMode ? 'تعديل عميل' : 'إضافة عميل جديد'}
-        size="md"
-      >
+      {/* Modal */}
+      <Modal isOpen={modalOpen} onClose={closeModal} title={editMode ? 'تعديل عميل' : 'إضافة عميل جديد'} size="md">
         <form onSubmit={handleSubmit} className="space-y-4">
-          <Input
-            label="اسم العميل"
-            name="name"
-            value={formData.name}
-            onChange={handleChange}
-            placeholder="اسم العميل"
-            required
-            error={errors.name}
-          />
-          <Input
-            label="رقم الهاتف"
-            type="tel"
-            name="phone"
-            value={formData.phone}
-            onChange={handleChange}
-            placeholder="01001234567"
-            required
-            error={errors.phone}
-          />
-          <Input
-            label="المنطقة (اختياري)"
-            name="area"
-            value={formData.area}
-            onChange={handleChange}
-            placeholder="المنطقة أو الحي"
-          />
-          <Input
-            label="العنوان (اختياري)"
-            name="address"
-            value={formData.address}
-            onChange={handleChange}
-            placeholder="العنوان التفصيلي"
-          />
+          <Input label="اسم العميل" name="name" value={formData.name} onChange={handleChange}
+            placeholder="اسم العميل" required error={errors.name} />
+          <Input label="رقم الهاتف" type="tel" name="phone" value={formData.phone} onChange={handleChange}
+            placeholder="01001234567" required error={errors.phone} />
+          <Input label="المنطقة (اختياري)" name="area" value={formData.area} onChange={handleChange} placeholder="المنطقة أو الحي" />
+          <Input label="العنوان (اختياري)" name="address" value={formData.address} onChange={handleChange} placeholder="العنوان التفصيلي" />
           <div className="flex gap-3 pt-2">
             <Button type="submit" variant="primary" fullWidth>
               {editMode ? 'تحديث العميل' : 'إضافة العميل'}
             </Button>
-            <Button type="button" variant="secondary" fullWidth onClick={closeModal}>
-              إلغاء
-            </Button>
+            <Button type="button" variant="secondary" fullWidth onClick={closeModal}>إلغاء</Button>
           </div>
         </form>
       </Modal>
@@ -388,14 +343,11 @@ export default function CustomersPage() {
       {/* Confirm Delete */}
       <ConfirmDialog
         isOpen={deleteConfirmOpen}
-        onClose={() => {
-          setDeleteConfirmOpen(false)
-          setCustomerToDelete(null)
-        }}
+        onClose={() => { if (!deleting) { setDeleteConfirmOpen(false); setCustomerToDelete(null) } }}
         onConfirm={confirmDelete}
         title="حذف العميل"
         message={`هل أنت متأكد من حذف العميل "${customerToDelete?.name}"؟`}
-        confirmText="حذف العميل"
+        confirmText={deleting ? 'جاري الحذف...' : 'حذف العميل'}
       />
     </div>
   )
