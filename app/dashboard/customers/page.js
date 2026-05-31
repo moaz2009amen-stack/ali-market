@@ -34,11 +34,12 @@ export default function CustomersPage() {
       const { data, error } = await supabase
         .from('customers')
         .select('*')
-        .eq('is_active', true)
+        .eq('is_active', true)   // ✅ فلتر العملاء الدائمين فقط
         .order('name')
       if (error) throw error
       setCustomers(data || [])
     } catch (error) {
+      console.error('fetchCustomers error:', error)
       toast.error('حدث خطأ في تحميل العملاء')
     } finally {
       setLoading(false)
@@ -74,21 +75,20 @@ export default function CustomersPage() {
         area: formData.area || null,
         is_active: true
       }
-
       if (editMode && currentCustomer) {
         const { error } = await supabase.from('customers').update(customerData).eq('id', currentCustomer.id)
         if (error) throw error
         toast.success('تم تحديث العميل بنجاح')
+        setCustomers(prev => prev.map(c => c.id === currentCustomer.id ? { ...c, ...customerData } : c))
       } else {
-        const { error } = await supabase.from('customers').insert([{ ...customerData, created_by: user.id }])
+        const { data, error } = await supabase.from('customers').insert([{ ...customerData, created_by: user.id }]).select().single()
         if (error) throw error
         toast.success('تم إضافة العميل بنجاح')
+        setCustomers(prev => [data, ...prev])
       }
-
-      fetchCustomers()
       closeModal()
     } catch (error) {
-      console.error('Error saving customer:', error)
+      console.error('Save customer error:', error)
       toast.error('حدث خطأ في حفظ العميل')
     }
   }
@@ -115,47 +115,61 @@ export default function CustomersPage() {
     setDeleting(true)
 
     try {
-      // ✅ الطريقة الصحيحة: Soft Delete (is_active = false)
-      // بدل الحذف الكامل لأن العميل ممكن يكون مرتبط بفواتير
-      const { error: softDeleteError } = await supabase
-        .from('customers')
-        .update({ is_active: false })
-        .eq('id', customerToDelete.id)
+      // ✅ الخطوة 1: حذف المدفوعات المرتبطة بالعميل
+      const { error: paymentsError } = await supabase
+        .from('payments')
+        .delete()
+        .eq('customer_id', customerToDelete.id)
 
-      if (!softDeleteError) {
-        toast.success('تم حذف العميل بنجاح')
-        setDeleteConfirmOpen(false)
-        setCustomerToDelete(null)
-        // إزالة من القائمة المحلية فوراً
-        setCustomers(prev => prev.filter(c => c.id !== customerToDelete.id))
-        return
+      if (paymentsError) {
+        console.warn('Payments delete warning:', paymentsError.message)
+        // مش مشكلة لو ما فيش payments
       }
 
-      // لو فشل الـ soft delete، جرب الحذف الكامل
-      console.log('Soft delete failed, trying hard delete...')
+      // ✅ الخطوة 2: حذف invoice_items المرتبطة بفواتير العميل
+      const { data: customerInvoices } = await supabase
+        .from('invoices')
+        .select('id')
+        .eq('customer_id', customerToDelete.id)
 
-      // حذف الدفعات المرتبطة
-      await supabase.from('payments').delete().eq('customer_id', customerToDelete.id)
+      if (customerInvoices && customerInvoices.length > 0) {
+        const invoiceIds = customerInvoices.map(inv => inv.id)
+        await supabase
+          .from('invoice_items')
+          .delete()
+          .in('invoice_id', invoiceIds)
 
-      // فك ارتباط الفواتير (set customer_id = null)
-      await supabase.from('invoices').update({ customer_id: null }).eq('customer_id', customerToDelete.id)
+        // ✅ الخطوة 3: حذف الفواتير المرتبطة
+        await supabase
+          .from('invoices')
+          .delete()
+          .eq('customer_id', customerToDelete.id)
+      }
 
-      // حذف العميل
-      const { error: deleteError } = await supabase
+      // ✅ الخطوة 4: حذف العميل فعلياً من DB
+      const { error: customerError } = await supabase
         .from('customers')
         .delete()
         .eq('id', customerToDelete.id)
 
-      if (deleteError) throw deleteError
+      if (customerError) {
+        console.error('Customer delete error:', customerError)
+        throw customerError
+      }
 
+      // ✅ تحديث الـ state فوراً
+      setCustomers(prev => prev.filter(c => c.id !== customerToDelete.id))
       toast.success('تم حذف العميل بنجاح')
       setDeleteConfirmOpen(false)
       setCustomerToDelete(null)
-      setCustomers(prev => prev.filter(c => c.id !== customerToDelete.id))
 
     } catch (error) {
       console.error('Delete error:', error)
-      toast.error('حدث خطأ في حذف العميل')
+      if (error.message?.includes('violates foreign key')) {
+        toast.error('لا يمكن الحذف - يوجد بيانات مرتبطة')
+      } else {
+        toast.error('حدث خطأ في الحذف: ' + error.message)
+      }
     } finally {
       setDeleting(false)
     }
@@ -281,12 +295,9 @@ export default function CustomersPage() {
           </Button>
         }
       >
-        {/* Desktop */}
         <div className="hidden md:block">
           <Table columns={columns} data={customers} loading={loading} emptyMessage="لا يوجد عملاء" />
         </div>
-
-        {/* Mobile Cards */}
         <div className="md:hidden space-y-3">
           {customers.length === 0 ? (
             <div className="text-center py-8 text-gray-500">لا يوجد عملاء</div>
@@ -322,31 +333,25 @@ export default function CustomersPage() {
         </div>
       </Card>
 
-      {/* Modal */}
       <Modal isOpen={modalOpen} onClose={closeModal} title={editMode ? 'تعديل عميل' : 'إضافة عميل جديد'} size="md">
         <form onSubmit={handleSubmit} className="space-y-4">
-          <Input label="اسم العميل" name="name" value={formData.name} onChange={handleChange}
-            placeholder="اسم العميل" required error={errors.name} />
-          <Input label="رقم الهاتف" type="tel" name="phone" value={formData.phone} onChange={handleChange}
-            placeholder="01001234567" required error={errors.phone} />
+          <Input label="اسم العميل" name="name" value={formData.name} onChange={handleChange} placeholder="اسم العميل" required error={errors.name} />
+          <Input label="رقم الهاتف" type="tel" name="phone" value={formData.phone} onChange={handleChange} placeholder="01001234567" required error={errors.phone} />
           <Input label="المنطقة (اختياري)" name="area" value={formData.area} onChange={handleChange} placeholder="المنطقة أو الحي" />
           <Input label="العنوان (اختياري)" name="address" value={formData.address} onChange={handleChange} placeholder="العنوان التفصيلي" />
           <div className="flex gap-3 pt-2">
-            <Button type="submit" variant="primary" fullWidth>
-              {editMode ? 'تحديث العميل' : 'إضافة العميل'}
-            </Button>
+            <Button type="submit" variant="primary" fullWidth>{editMode ? 'تحديث العميل' : 'إضافة العميل'}</Button>
             <Button type="button" variant="secondary" fullWidth onClick={closeModal}>إلغاء</Button>
           </div>
         </form>
       </Modal>
 
-      {/* Confirm Delete */}
       <ConfirmDialog
         isOpen={deleteConfirmOpen}
         onClose={() => { if (!deleting) { setDeleteConfirmOpen(false); setCustomerToDelete(null) } }}
         onConfirm={confirmDelete}
         title="حذف العميل"
-        message={`هل أنت متأكد من حذف العميل "${customerToDelete?.name}"؟`}
+        message={`هل أنت متأكد من حذف العميل "${customerToDelete?.name}"؟ سيتم حذف جميع فواتيره أيضاً.`}
         confirmText={deleting ? 'جاري الحذف...' : 'حذف العميل'}
       />
     </div>
