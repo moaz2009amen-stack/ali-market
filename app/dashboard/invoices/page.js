@@ -9,7 +9,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import InvoicePreview from '@/components/invoice/InvoicePreview'
 import { printThermalInvoice } from '@/lib/utils/exports'
-import { Plus, Eye, Edit2, Trash2, FileText, Search } from 'lucide-react'
+import { Plus, Eye, Edit2, Trash2, Search } from 'lucide-react'
 import { formatCurrency, formatDate } from '@/lib/utils/format'
 import toast from 'react-hot-toast'
 
@@ -25,6 +25,7 @@ export default function InvoicesPage() {
   const [previewInvoice, setPreviewInvoice] = useState(null)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [invoiceToDelete, setInvoiceToDelete] = useState(null)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
     fetchUserRole()
@@ -49,10 +50,7 @@ export default function InvoicesPage() {
     try {
       const { data, error } = await supabase
         .from('invoices')
-        .select(`
-          *,
-          customers (name)
-        `)
+        .select(`*, customers (name)`)
         .order('created_at', { ascending: false })
 
       if (error) throw error
@@ -75,9 +73,7 @@ export default function InvoicesPage() {
         .from('invoice_items')
         .select('*')
         .eq('invoice_id', invoice.id)
-
       if (error) throw error
-
       setPreviewInvoice({ ...invoice, items: items || [] })
     } catch (error) {
       toast.error('حدث خطأ في تحميل الفاتورة')
@@ -94,39 +90,66 @@ export default function InvoicesPage() {
   }
 
   const confirmDelete = async () => {
-    if (!invoiceToDelete) return
+    if (!invoiceToDelete || deleting) return
+    setDeleting(true)
+
     try {
+      // ✅ الخطوة 1: حذف invoice_items أولاً
       const { error: itemsError } = await supabase
         .from('invoice_items')
         .delete()
         .eq('invoice_id', invoiceToDelete.id)
 
-      if (itemsError) throw itemsError
+      if (itemsError) {
+        console.error('Items delete error:', itemsError)
+        throw new Error('فشل في حذف بنود الفاتورة: ' + itemsError.message)
+      }
 
+      // ✅ الخطوة 2: حذف payments المرتبطة
+      const { error: paymentsError } = await supabase
+        .from('payments')
+        .delete()
+        .eq('invoice_id', invoiceToDelete.id)
+
+      if (paymentsError) {
+        console.error('Payments delete error:', paymentsError)
+        // مش error حرج - ممكن ما فيش payments
+      }
+
+      // ✅ الخطوة 3: حذف الفاتورة نفسها
       const { error: invoiceError } = await supabase
         .from('invoices')
         .delete()
         .eq('id', invoiceToDelete.id)
 
-      if (invoiceError) throw invoiceError
+      if (invoiceError) {
+        console.error('Invoice delete error:', invoiceError)
+        throw new Error('فشل في حذف الفاتورة: ' + invoiceError.message)
+      }
 
       toast.success('تم حذف الفاتورة بنجاح')
       setDeleteConfirmOpen(false)
       setInvoiceToDelete(null)
-      fetchInvoices()
+
+      // ✅ تحديث القائمة محلياً بدون إعادة تحميل كاملة
+      setInvoices(prev => prev.filter(inv => inv.id !== invoiceToDelete.id))
+
     } catch (error) {
       console.error('Error deleting invoice:', error)
-      toast.error('حدث خطأ في حذف الفاتورة')
+      toast.error(error.message || 'حدث خطأ في حذف الفاتورة')
+    } finally {
+      setDeleting(false)
     }
   }
 
   const getStatusBadge = (status) => {
-    switch (status) {
-      case 'paid': return <Badge variant="success">مدفوع</Badge>
-      case 'partial': return <Badge variant="warning">جزئي</Badge>
-      case 'unpaid': return <Badge variant="danger">غير مدفوع</Badge>
-      default: return <Badge variant="default">{status}</Badge>
+    const map = {
+      paid: { variant: 'success', label: 'مدفوع' },
+      partial: { variant: 'warning', label: 'جزئي' },
+      unpaid: { variant: 'danger', label: 'غير مدفوع' },
     }
+    const s = map[status] || { variant: 'default', label: status }
+    return <Badge variant={s.variant}>{s.label}</Badge>
   }
 
   const filteredInvoices = invoices.filter(inv => {
@@ -142,8 +165,7 @@ export default function InvoicesPage() {
     paid: invoices.filter(i => i.payment_status === 'paid').length,
     partial: invoices.filter(i => i.payment_status === 'partial').length,
     unpaid: invoices.filter(i => i.payment_status === 'unpaid').length,
-    totalAmount: invoices.reduce((s, i) => s + (i.total_amount || 0), 0),
-    totalRemaining: invoices.reduce((s, i) => s + (i.remaining_amount || 0), 0),
+    totalRemaining: invoices.reduce((s, i) => s + (parseFloat(i.remaining_amount) || 0), 0),
   }
 
   if (loading) {
@@ -172,7 +194,7 @@ export default function InvoicesPage() {
         </Card>
         <Card padding={false} className="p-4 sm:p-6">
           <p className="text-xs sm:text-sm text-gray-600">إجمالي الديون</p>
-          <p className="text-lg sm:text-xl font-bold text-danger-600">{formatCurrency(stats.totalRemaining)}</p>
+          <p className="text-base sm:text-xl font-bold text-danger-600">{formatCurrency(stats.totalRemaining)}</p>
         </Card>
       </div>
 
@@ -186,22 +208,22 @@ export default function InvoicesPage() {
           </Button>
         }
       >
-        {/* فلاتر البحث */}
+        {/* فلاتر */}
         <div className="flex flex-col sm:flex-row gap-3 mb-4">
           <div className="relative flex-1">
-            <Search size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="بحث برقم الفاتورة أو العميل..."
-              className="w-full pr-10 pl-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-primary-500 text-sm"
+              className="w-full pr-9 pl-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-primary-500"
             />
           </div>
           <select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
-            className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-primary-500 text-sm bg-white appearance-none"
+            className="px-4 py-2.5 border border-gray-300 rounded-lg text-sm bg-white appearance-none focus:outline-none focus:border-primary-500"
           >
             <option value="all">الكل</option>
             <option value="paid">مدفوع</option>
@@ -228,9 +250,7 @@ export default function InvoicesPage() {
             <tbody className="divide-y divide-gray-100">
               {filteredInvoices.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="text-center py-12 text-gray-500">
-                    لا توجد فواتير
-                  </td>
+                  <td colSpan={8} className="text-center py-12 text-gray-500">لا توجد فواتير</td>
                 </tr>
               ) : (
                 filteredInvoices.map((invoice) => (
@@ -244,27 +264,18 @@ export default function InvoicesPage() {
                     <td className="px-4 py-3 text-gray-500 text-sm">{formatDate(invoice.created_at)}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => handleView(invoice)}
-                          className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
-                          title="معاينة"
-                        >
+                        <button onClick={() => handleView(invoice)}
+                          className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors" title="معاينة">
                           <Eye size={16} />
                         </button>
                         {userRole === 'owner' && (
                           <>
-                            <button
-                              onClick={() => router.push(`/dashboard/invoices/${invoice.id}/edit`)}
-                              className="p-2 text-warning-600 hover:bg-warning-50 rounded-lg transition-colors"
-                              title="تعديل"
-                            >
+                            <button onClick={() => router.push(`/dashboard/invoices/${invoice.id}/edit`)}
+                              className="p-2 text-warning-600 hover:bg-warning-50 rounded-lg transition-colors" title="تعديل">
                               <Edit2 size={16} />
                             </button>
-                            <button
-                              onClick={() => handleDelete(invoice)}
-                              className="p-2 text-danger-600 hover:bg-danger-50 rounded-lg transition-colors"
-                              title="حذف"
-                            >
+                            <button onClick={() => handleDelete(invoice)}
+                              className="p-2 text-danger-600 hover:bg-danger-50 rounded-lg transition-colors" title="حذف">
                               <Trash2 size={16} />
                             </button>
                           </>
@@ -288,50 +299,39 @@ export default function InvoicesPage() {
                 <div className="flex items-start justify-between mb-3">
                   <div>
                     <p className="font-bold text-primary-600">#{invoice.invoice_number}</p>
-                    <p className="text-sm text-gray-700 font-medium">{invoice.customer_name}</p>
+                    <p className="text-sm font-medium text-gray-700">{invoice.customer_name}</p>
                     <p className="text-xs text-gray-500">{formatDate(invoice.created_at)}</p>
                   </div>
                   {getStatusBadge(invoice.payment_status)}
                 </div>
-
-                <div className="grid grid-cols-3 gap-2 text-sm mb-3">
-                  <div className="bg-white rounded-lg p-2 text-center">
+                <div className="grid grid-cols-3 gap-2 text-center mb-3">
+                  <div className="bg-white rounded-lg p-2">
                     <p className="text-xs text-gray-500">الإجمالي</p>
                     <p className="font-bold text-gray-900 text-xs">{formatCurrency(invoice.total_amount || 0)}</p>
                   </div>
-                  <div className="bg-white rounded-lg p-2 text-center">
+                  <div className="bg-white rounded-lg p-2">
                     <p className="text-xs text-gray-500">المدفوع</p>
                     <p className="font-bold text-success-600 text-xs">{formatCurrency(invoice.paid_amount || 0)}</p>
                   </div>
-                  <div className="bg-white rounded-lg p-2 text-center">
+                  <div className="bg-white rounded-lg p-2">
                     <p className="text-xs text-gray-500">المتبقي</p>
                     <p className="font-bold text-danger-600 text-xs">{formatCurrency(invoice.remaining_amount || 0)}</p>
                   </div>
                 </div>
-
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => handleView(invoice)}
-                    className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-primary-600 bg-primary-50 hover:bg-primary-100 rounded-lg text-sm transition-colors"
-                  >
-                    <Eye size={15} />
-                    معاينة
+                  <button onClick={() => handleView(invoice)}
+                    className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-primary-600 bg-primary-50 hover:bg-primary-100 rounded-lg text-sm transition-colors">
+                    <Eye size={15} />معاينة
                   </button>
                   {userRole === 'owner' && (
                     <>
-                      <button
-                        onClick={() => router.push(`/dashboard/invoices/${invoice.id}/edit`)}
-                        className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-warning-600 bg-warning-50 hover:bg-warning-100 rounded-lg text-sm transition-colors"
-                      >
-                        <Edit2 size={15} />
-                        تعديل
+                      <button onClick={() => router.push(`/dashboard/invoices/${invoice.id}/edit`)}
+                        className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-warning-600 bg-warning-50 hover:bg-warning-100 rounded-lg text-sm transition-colors">
+                        <Edit2 size={15} />تعديل
                       </button>
-                      <button
-                        onClick={() => handleDelete(invoice)}
-                        className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-danger-600 bg-danger-50 hover:bg-danger-100 rounded-lg text-sm transition-colors"
-                      >
-                        <Trash2 size={15} />
-                        حذف
+                      <button onClick={() => handleDelete(invoice)}
+                        className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-danger-600 bg-danger-50 hover:bg-danger-100 rounded-lg text-sm transition-colors">
+                        <Trash2 size={15} />حذف
                       </button>
                     </>
                   )}
@@ -349,7 +349,6 @@ export default function InvoicesPage() {
           onClose={() => setPreviewInvoice(null)}
           onPrint={() => {
             printThermalInvoice(previewInvoice)
-            setPreviewInvoice(null)
           }}
         />
       )}
@@ -358,13 +357,15 @@ export default function InvoicesPage() {
       <ConfirmDialog
         isOpen={deleteConfirmOpen}
         onClose={() => {
-          setDeleteConfirmOpen(false)
-          setInvoiceToDelete(null)
+          if (!deleting) {
+            setDeleteConfirmOpen(false)
+            setInvoiceToDelete(null)
+          }
         }}
         onConfirm={confirmDelete}
         title="حذف الفاتورة"
         message={`هل أنت متأكد من حذف الفاتورة #${invoiceToDelete?.invoice_number}؟ لا يمكن التراجع عن هذا الإجراء.`}
-        confirmText="حذف الفاتورة"
+        confirmText={deleting ? 'جاري الحذف...' : 'حذف الفاتورة'}
       />
     </div>
   )
