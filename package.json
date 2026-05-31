@@ -14,7 +14,6 @@
     "react-dom": "^18.3.1",
     "@supabase/supabase-js": "^2.43.4",
     "@supabase/ssr": "^0.3.0",
-    "@ducanh2912/next-pwa": "^10.2.9",
     "dexie": "^4.0.7",
     "dexie-react-hooks": "^1.1.7",
     "jspdf": "^2.5.1",
