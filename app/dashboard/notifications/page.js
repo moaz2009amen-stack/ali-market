@@ -2,7 +2,6 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import Card from '@/components/ui/Card'
-import Badge from '@/components/ui/Badge'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { Bell, AlertTriangle, DollarSign, Package, CheckCircle } from 'lucide-react'
 import { formatCurrency, formatDateTime } from '@/lib/utils/format'
@@ -21,7 +20,7 @@ export default function NotificationsPage() {
   async function fetchNotifications() {
     try {
       const { data: { user } } = await supabase.auth.getUser()
-      
+
       const { data, error } = await supabase
         .from('notifications')
         .select('*')
@@ -42,44 +41,67 @@ export default function NotificationsPage() {
     try {
       const { data: { user } } = await supabase.auth.getUser()
 
-      // إشعارات المنتجات المنخفضة
-      const { data: lowStockProducts } = await supabase
+      // ✅ إصلاح: جيب المنتجات وفلتر في JavaScript بدل query خاطئ
+      const { data: allProducts } = await supabase
         .from('products')
         .select('name, quantity, min_stock')
-        .lte('quantity', supabase.rpc('quantity'))
-        .limit(5)
+        .eq('is_active', true)
 
-      if (lowStockProducts && lowStockProducts.length > 0) {
-        for (const product of lowStockProducts) {
-          if (product.quantity <= product.min_stock) {
-            await supabase.from('notifications').insert({
-              user_id: user.id,
-              title: 'منتج منخفض',
-              message: `المنتج "${product.name}" وصل لأقل كمية (${product.quantity} متبقي)`,
-              type: 'warning'
-            })
-          }
+      const lowStockProducts = (allProducts || []).filter(
+        p => p.quantity <= (p.min_stock || 5)
+      ).slice(0, 5)
+
+      // ✅ إصلاح: تحقق من وجود الإشعار قبل إضافته (منع التكرار)
+      for (const product of lowStockProducts) {
+        const today = new Date().toISOString().split('T')[0]
+
+        const { data: existing } = await supabase
+          .from('notifications')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('title', 'منتج منخفض')
+          .ilike('message', `%${product.name}%`)
+          .gte('created_at', today)
+          .limit(1)
+
+        if (!existing || existing.length === 0) {
+          await supabase.from('notifications').insert({
+            user_id: user.id,
+            title: 'منتج منخفض',
+            message: `المنتج "${product.name}" وصل لأقل كمية (${product.quantity} متبقي)`,
+            type: 'warning'
+          })
         }
       }
 
-      // إشعارات الديون المتأخرة
+      // ✅ إصلاح: نفس المنطق للعملاء ذوي الديون العالية
       const { data: debtCustomers } = await supabase
         .from('customers')
         .select('name, total_debt')
-        .gt('total_debt', 0)
+        .gt('total_debt', 1000)
+        .eq('is_active', true)
         .order('total_debt', { ascending: false })
         .limit(5)
 
-      if (debtCustomers && debtCustomers.length > 0) {
-        for (const customer of debtCustomers) {
-          if (customer.total_debt > 1000) {
-            await supabase.from('notifications').insert({
-              user_id: user.id,
-              title: 'دين مرتفع',
-              message: `العميل "${customer.name}" عليه دين ${formatCurrency(customer.total_debt)}`,
-              type: 'error'
-            })
-          }
+      for (const customer of (debtCustomers || [])) {
+        const today = new Date().toISOString().split('T')[0]
+
+        const { data: existing } = await supabase
+          .from('notifications')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('title', 'دين مرتفع')
+          .ilike('message', `%${customer.name}%`)
+          .gte('created_at', today)
+          .limit(1)
+
+        if (!existing || existing.length === 0) {
+          await supabase.from('notifications').insert({
+            user_id: user.id,
+            title: 'دين مرتفع',
+            message: `العميل "${customer.name}" عليه دين ${formatCurrency(customer.total_debt)}`,
+            type: 'danger'
+          })
         }
       }
 
@@ -97,8 +119,8 @@ export default function NotificationsPage() {
         .eq('id', id)
 
       if (error) throw error
-      
-      setNotifications(notifications.map(n => 
+
+      setNotifications(notifications.map(n =>
         n.id === id ? { ...n, is_read: true } : n
       ))
     } catch (error) {
@@ -109,7 +131,7 @@ export default function NotificationsPage() {
   async function markAllAsRead() {
     try {
       const { data: { user } } = await supabase.auth.getUser()
-      
+
       const { error } = await supabase
         .from('notifications')
         .update({ is_read: true })
@@ -117,7 +139,7 @@ export default function NotificationsPage() {
         .eq('is_read', false)
 
       if (error) throw error
-      
+
       setNotifications(notifications.map(n => ({ ...n, is_read: true })))
       toast.success('تم تحديد جميع الإشعارات كمقروءة')
     } catch (error) {
@@ -127,11 +149,11 @@ export default function NotificationsPage() {
   }
 
   const getIcon = (type) => {
-    switch(type) {
+    switch (type) {
       case 'warning': return <AlertTriangle className="text-warning-600" size={20} />
-      case 'error': return <DollarSign className="text-danger-600" size={20} />
-      case 'success': return <CheckCircle className="text-success-600" size={20} />
-      default: return <Bell className="text-primary-600" size={20} />
+      case 'danger':  return <DollarSign   className="text-danger-600"  size={20} />
+      case 'success': return <CheckCircle  className="text-success-600" size={20} />
+      default:        return <Bell         className="text-primary-600" size={20} />
     }
   }
 
@@ -147,7 +169,6 @@ export default function NotificationsPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <Card>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -159,7 +180,6 @@ export default function NotificationsPage() {
               </p>
             </div>
           </div>
-          
           {unreadCount > 0 && (
             <button
               onClick={markAllAsRead}
@@ -171,7 +191,6 @@ export default function NotificationsPage() {
         </div>
       </Card>
 
-      {/* Notifications List */}
       <Card>
         <div className="space-y-3">
           {notifications.length === 0 ? (
@@ -186,35 +205,26 @@ export default function NotificationsPage() {
                 onClick={() => !notification.is_read && markAsRead(notification.id)}
                 className={`
                   p-4 rounded-lg border cursor-pointer transition-colors
-                  ${notification.is_read 
-                    ? 'bg-white border-gray-200' 
+                  ${notification.is_read
+                    ? 'bg-white border-gray-200'
                     : 'bg-primary-50 border-primary-200'
                   }
                   hover:bg-gray-50
                 `}
               >
                 <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center flex-shrink-0">
+                  <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center flex-shrink-0 border border-gray-100">
                     {getIcon(notification.type)}
                   </div>
-                  
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2 mb-1">
-                      <h3 className="font-semibold text-gray-900">
-                        {notification.title}
-                      </h3>
+                      <h3 className="font-semibold text-gray-900">{notification.title}</h3>
                       {!notification.is_read && (
-                        <span className="w-2 h-2 bg-primary-600 rounded-full flex-shrink-0 mt-1.5"></span>
+                        <span className="w-2 h-2 bg-primary-600 rounded-full flex-shrink-0 mt-1.5" />
                       )}
                     </div>
-                    
-                    <p className="text-sm text-gray-600 mb-2">
-                      {notification.message}
-                    </p>
-                    
-                    <p className="text-xs text-gray-500">
-                      {formatDateTime(notification.created_at)}
-                    </p>
+                    <p className="text-sm text-gray-600 mb-2">{notification.message}</p>
+                    <p className="text-xs text-gray-500">{formatDateTime(notification.created_at)}</p>
                   </div>
                 </div>
               </div>
