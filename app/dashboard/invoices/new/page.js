@@ -2,15 +2,26 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { saveToCache, getFromCache, isOnline, addToQueue } from '@/lib/offline/offlineDb'
 import Card from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
 import Select from '@/components/ui/Select'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import { Plus, Trash2, Save, Printer, ArrowRight } from 'lucide-react'
+import { Plus, Trash2, Save, Printer, ArrowRight, WifiOff } from 'lucide-react'
 import { formatCurrency } from '@/lib/utils/format'
 import { printThermalInvoice } from '@/lib/utils/exports'
 import toast from 'react-hot-toast'
+
+// توليد UUID محلي للعمليات الـ offline
+function localUUID() {
+  return 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9)
+}
+
+// توليد رقم فاتورة مؤقت للـ offline
+function localInvoiceNumber() {
+  return 'DRAFT-' + Date.now()
+}
 
 export default function NewInvoicePage() {
   const router   = useRouter()
@@ -18,6 +29,7 @@ export default function NewInvoicePage() {
 
   const [loading, setLoading]           = useState(true)
   const [saving, setSaving]             = useState(false)
+  const [offline, setOffline]           = useState(false)
   const [customers, setCustomers]       = useState([])
   const [products, setProducts]         = useState([])
   const [customerType, setCustomerType] = useState('existing')
@@ -28,61 +40,61 @@ export default function NewInvoicePage() {
   const [notes, setNotes]               = useState('')
   const [draftSaved, setDraftSaved]     = useState(false)
 
-  // ref للـ auto-save بدون stale closure
   const stateRef = useRef({})
   useEffect(() => {
     stateRef.current = { customerType, selectedCustomer, tempCustomerName, invoiceItems, paidAmount, notes }
   })
 
-  useEffect(() => { fetchInitialData() }, [])
+  useEffect(() => {
+    fetchInitialData()
+    setOffline(!navigator.onLine)
+    const onOnline  = () => setOffline(false)
+    const onOffline = () => setOffline(true)
+    window.addEventListener('online',  onOnline)
+    window.addEventListener('offline', onOffline)
+    return () => {
+      window.removeEventListener('online',  onOnline)
+      window.removeEventListener('offline', onOffline)
+    }
+  }, [])
 
-  // تحميل المسودة بعد تحميل البيانات
+  // تحميل المسودة
   useEffect(() => {
     if (loading) return
     try {
       const saved = localStorage.getItem('invoice_draft')
       if (!saved) return
       const draft = JSON.parse(saved)
-      toast(
-        (t) => (
-          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span>مسودة محفوظة</span>
-            <button
-              style={{ fontWeight: 600, textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer' }}
-              onClick={() => {
-                setCustomerType(draft.customerType || 'existing')
-                setSelectedCustomer(draft.customer_id || '')
-                setTempCustomerName(draft.temp_name || '')
-                setInvoiceItems(draft.items || [])
-                setPaidAmount(draft.paid_amount || '')
-                setNotes(draft.notes || '')
-                toast.dismiss(t.id)
-              }}
-            >استكمال</button>
-            <button
-              style={{ color: '#666', background: 'none', border: 'none', cursor: 'pointer' }}
-              onClick={() => { localStorage.removeItem('invoice_draft'); toast.dismiss(t.id) }}
-            >تجاهل</button>
-          </span>
-        ),
-        { duration: 8000 }
-      )
+      toast((t) => (
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span>مسودة محفوظة</span>
+          <button style={{ fontWeight: 600, textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer' }}
+            onClick={() => {
+              setCustomerType(draft.customerType || 'existing')
+              setSelectedCustomer(draft.customer_id || '')
+              setTempCustomerName(draft.temp_name || '')
+              setInvoiceItems(draft.items || [])
+              setPaidAmount(draft.paid_amount || '')
+              setNotes(draft.notes || '')
+              toast.dismiss(t.id)
+            }}>استكمال</button>
+          <button style={{ color: '#666', background: 'none', border: 'none', cursor: 'pointer' }}
+            onClick={() => { localStorage.removeItem('invoice_draft'); toast.dismiss(t.id) }}>تجاهل</button>
+        </span>
+      ), { duration: 8000 })
     } catch (e) { localStorage.removeItem('invoice_draft') }
   }, [loading])
 
-  // auto-save كل 30 ثانية
+  // auto-save
   useEffect(() => {
     const interval = setInterval(() => {
       const s = stateRef.current
       if (s.invoiceItems?.length > 0 && (s.selectedCustomer || s.tempCustomerName)) {
         localStorage.setItem('invoice_draft', JSON.stringify({
-          customerType: s.customerType,
-          customer_id:  s.selectedCustomer,
-          temp_name:    s.tempCustomerName,
-          items:        s.invoiceItems,
-          paid_amount:  s.paidAmount,
-          notes:        s.notes,
-          saved_at:     new Date().toISOString()
+          customerType: s.customerType, customer_id: s.selectedCustomer,
+          temp_name: s.tempCustomerName, items: s.invoiceItems,
+          paid_amount: s.paidAmount, notes: s.notes,
+          saved_at: new Date().toISOString()
         }))
         setDraftSaved(true)
         setTimeout(() => setDraftSaved(false), 2000)
@@ -92,15 +104,39 @@ export default function NewInvoicePage() {
   }, [])
 
   async function fetchInitialData() {
+    const online = isOnline()
+    setOffline(!online)
+
+    if (!online) {
+      // جيب من الـ cache المحلي
+      const [cachedCustomers, cachedProducts] = await Promise.all([
+        getFromCache('customers'),
+        getFromCache('products')
+      ])
+      setCustomers(cachedCustomers.filter(c => c.is_active))
+      setProducts(cachedProducts.filter(p => p.is_active && p.quantity > 0))
+      setLoading(false)
+      return
+    }
+
     try {
       const [{ data: customersData }, { data: productsData }] = await Promise.all([
         supabase.from('customers').select('id, name').eq('is_active', true).order('name'),
         supabase.from('products').select('*').eq('is_active', true).gt('quantity', 0).order('name')
       ])
-      setCustomers(customersData || [])
-      setProducts(productsData || [])
+      const c = customersData || []
+      const p = productsData  || []
+      setCustomers(c)
+      setProducts(p)
+      // احفظ في الـ cache للاستخدام offline
+      await saveToCache('customers', c)
+      await saveToCache('products',  p)
     } catch (error) {
-      toast.error('حدث خطأ في تحميل البيانات')
+      // fallback للـ cache
+      const [cc, cp] = await Promise.all([getFromCache('customers'), getFromCache('products')])
+      setCustomers(cc.filter(c => c.is_active))
+      setProducts(cp.filter(p => p.is_active && p.quantity > 0))
+      toast.error('تم تحميل البيانات من الجهاز')
     } finally {
       setLoading(false)
     }
@@ -114,12 +150,12 @@ export default function NewInvoicePage() {
   const updateItem = (itemId, field, value) => {
     setInvoiceItems(prev => prev.map(item => {
       if (item.id !== itemId) return item
-      let updated = { ...item, [field]: value }
+      let u = { ...item, [field]: value }
       if (field === 'product_id' && value) {
         const p = products.find(p => p.id === value)
-        if (p) updated = { ...updated, product_name: p.name, cost_price: p.cost_price, selling_price: p.selling_price, available_quantity: p.quantity }
+        if (p) u = { ...u, product_name: p.name, cost_price: p.cost_price, selling_price: p.selling_price, available_quantity: p.quantity }
       }
-      return updated
+      return u
     }))
   }
 
@@ -145,47 +181,135 @@ export default function NewInvoicePage() {
     return true
   }
 
-  const handleSave = async (printAfter = false) => {
-    if (!validate()) return
-    setSaving(true)
+  // ✅ حفظ offline — يحفظ محلياً ويضيف للـ queue
+  const saveOffline = async () => {
+    const { total, paid, remaining } = getTotals()
+    const paymentStatus = paid >= total ? 'paid' : paid > 0 ? 'partial' : 'unpaid'
+    const now           = new Date().toISOString()
 
+    // عميل مؤقت — أضفه في cache + queue
+    let finalCustomerId = selectedCustomer
+    let customerName    = customers.find(c => c.id === selectedCustomer)?.name || ''
+
+    if (customerType === 'temporary') {
+      const tempId = localUUID()
+      const tempCustomer = {
+        id:         tempId,
+        name:       tempCustomerName.trim(),
+        phone:      'مؤقت',
+        is_active:  false,
+        total_debt: remaining,
+        created_at: now
+      }
+      // احفظ في الـ cache المحلي
+      const cachedCustomers = await getFromCache('customers')
+      await saveToCache('customers', [...cachedCustomers, tempCustomer])
+      // أضف للـ queue عشان يترفع لما النت يرجع
+      await addToQueue('customers', 'insert', tempCustomer)
+      finalCustomerId = tempId
+      customerName    = tempCustomerName.trim()
+    }
+
+    // أنشئ الفاتورة محلياً
+    const invoiceId     = localUUID()
+    const invoiceNumber = localInvoiceNumber()
+    const invoiceData   = {
+      id:               invoiceId,
+      invoice_number:   invoiceNumber,
+      customer_id:      finalCustomerId,
+      total_amount:     total,
+      paid_amount:      paid,
+      remaining_amount: remaining,
+      payment_status:   paymentStatus,
+      notes:            notes,
+      created_at:       now,
+      customer_name:    customerName,
+    }
+
+    // احفظ في الـ cache
+    const cachedInvoices = await getFromCache('invoices')
+    await saveToCache('invoices', [invoiceData, ...cachedInvoices])
+
+    // أضف الفاتورة للـ queue
+    await addToQueue('invoices', 'insert', invoiceData)
+
+    // أضف البنود للـ queue
+    const items = invoiceItems.map(item => ({
+      id:            localUUID(),
+      invoice_id:    invoiceId,
+      product_id:    item.product_id,
+      product_name:  item.product_name,
+      quantity:      item.quantity,
+      cost_price:    parseFloat(item.cost_price   || 0),
+      selling_price: parseFloat(item.selling_price || 0),
+      total:         item.quantity * parseFloat(item.selling_price || 0),
+      profit:        (parseFloat(item.selling_price || 0) - parseFloat(item.cost_price || 0)) * item.quantity
+    }))
+    for (const item of items) {
+      await addToQueue('invoice_items', 'insert', item)
+    }
+
+    // أضف الدفعة للـ queue لو فيه
+    if (paid > 0) {
+      await addToQueue('payments', 'insert', {
+        id:             localUUID(),
+        customer_id:    finalCustomerId,
+        invoice_id:     invoiceId,
+        amount:         paid,
+        payment_method: 'نقدي',
+        created_at:     now,
+      })
+    }
+
+    // خصم المخزون محلياً
+    const cachedProducts = await getFromCache('products')
+    const updatedProducts = cachedProducts.map(p => {
+      const item = invoiceItems.find(i => i.product_id === p.id)
+      if (!item) return p
+      return { ...p, quantity: Math.max(0, p.quantity - item.quantity) }
+    })
+    await saveToCache('products', updatedProducts)
+
+    localStorage.removeItem('invoice_draft')
+    toast.success('✓ تم حفظ الفاتورة — سيتم الرفع عند عودة الإنترنت')
+    router.push('/dashboard/invoices')
+  }
+
+  // ✅ حفظ online — المسار العادي
+  const saveOnline = async (printAfter = false) => {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       const { total, paid, remaining } = getTotals()
       const { data: invoiceNumber }    = await supabase.rpc('generate_invoice_number')
       const paymentStatus = paid >= total ? 'paid' : paid > 0 ? 'partial' : 'unpaid'
 
-      // إنشاء عميل مؤقت لو لزم
       let finalCustomerId = selectedCustomer
       let customerName    = customers.find(c => c.id === selectedCustomer)?.name || ''
 
       if (customerType === 'temporary') {
-        const { data: newCustomer, error: custErr } = await supabase
+        const { data: newCust, error: custErr } = await supabase
           .from('customers')
           .insert([{ name: tempCustomerName.trim(), phone: 'مؤقت', is_active: false, created_by: user.id }])
           .select().single()
         if (custErr) throw custErr
-        finalCustomerId = newCustomer.id
+        finalCustomerId = newCust.id
         customerName    = tempCustomerName.trim()
       }
 
-      // ✅ حفظ الفاتورة بـ paid_amount الصح مباشرةً
-      const { data: invoice, error: invoiceError } = await supabase
+      const { data: invoice, error: invErr } = await supabase
         .from('invoices')
         .insert([{
           invoice_number:   invoiceNumber || `INV-${Date.now()}`,
           customer_id:      finalCustomerId,
           total_amount:     total,
-          paid_amount:      paid,       // ← الرقم الصح مباشرة
+          paid_amount:      paid,
           remaining_amount: remaining,
           payment_status:   paymentStatus,
-          notes:            notes,
-          created_by:       user.id
+          notes, created_by: user.id
         }])
         .select().single()
-      if (invoiceError) throw invoiceError
+      if (invErr) throw invErr
 
-      // حفظ بنود الفاتورة (trigger خصم المخزون يشتغل هنا تلقائي)
       const items = invoiceItems.map(item => ({
         invoice_id:    invoice.id,
         product_id:    item.product_id,
@@ -199,8 +323,6 @@ export default function NewInvoicePage() {
       const { error: itemsErr } = await supabase.from('invoice_items').insert(items)
       if (itemsErr) throw itemsErr
 
-      // ✅ تسجيل الدفعة في جدول payments للتاريخ فقط (بدون trigger يحدث invoices مرة ثانية)
-      // الـ paid_amount في invoices اتحدد صح فوق — ده بس للسجل التاريخي
       if (paid > 0) {
         await supabase.from('payments').insert([{
           customer_id:    finalCustomerId,
@@ -209,19 +331,35 @@ export default function NewInvoicePage() {
           payment_method: 'نقدي',
           collected_by:   user.id
         }])
-        // ملاحظة: لا يوجد trigger على payments يعدل invoices — الكود هو المصدر الوحيد
       }
 
       localStorage.removeItem('invoice_draft')
       toast.success('تم حفظ الفاتورة بنجاح')
-
       if (printAfter) printThermalInvoice({ ...invoice, customer_name: customerName, items })
-
       router.push('/dashboard/invoices')
       router.refresh()
     } catch (error) {
-      console.error('Save error:', error)
-      toast.error('حدث خطأ في حفظ الفاتورة')
+      console.error(error)
+      throw error
+    }
+  }
+
+  const handleSave = async (printAfter = false) => {
+    if (!validate()) return
+    setSaving(true)
+    try {
+      if (!isOnline()) {
+        await saveOffline()
+      } else {
+        await saveOnline(printAfter)
+      }
+    } catch (error) {
+      // لو فشل online جرب offline
+      if (!isOnline()) {
+        await saveOffline()
+      } else {
+        toast.error('حدث خطأ في حفظ الفاتورة')
+      }
     } finally {
       setSaving(false)
     }
@@ -240,16 +378,19 @@ export default function NewInvoicePage() {
           <ArrowRight size={24} />
         </button>
         <h1 className="text-xl sm:text-2xl font-bold text-gray-900">إنشاء فاتورة جديدة</h1>
+        {offline && (
+          <span className="flex items-center gap-1 text-xs bg-yellow-100 text-yellow-700 px-2 py-1 rounded-full">
+            <WifiOff size={12} /> بدون نت
+          </span>
+        )}
       </div>
 
       {/* نوع العميل */}
       <Card title="بيانات العميل">
         <div className="space-y-4">
           <div className="flex gap-3 p-3 bg-gray-50 rounded-lg">
-            {['existing', 'temporary'].map(type => (
-              <button
-                key={type}
-                onClick={() => setCustomerType(type)}
+            {['existing','temporary'].map(type => (
+              <button key={type} onClick={() => setCustomerType(type)}
                 className={`flex-1 px-4 py-2 rounded-lg font-medium transition-colors text-sm ${
                   customerType === type ? 'bg-primary-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'
                 }`}
@@ -259,22 +400,14 @@ export default function NewInvoicePage() {
             ))}
           </div>
           {customerType === 'existing' ? (
-            <Select
-              label="اختر العميل"
-              value={selectedCustomer}
+            <Select label="اختر العميل" value={selectedCustomer}
               onChange={e => setSelectedCustomer(e.target.value)}
               options={customers.map(c => ({ value: c.id, label: c.name }))}
-              placeholder="اختر العميل"
-              required
-            />
+              placeholder="اختر العميل" required />
           ) : (
-            <Input
-              label="اسم العميل المؤقت"
-              value={tempCustomerName}
+            <Input label="اسم العميل المؤقت" value={tempCustomerName}
               onChange={e => setTempCustomerName(e.target.value)}
-              placeholder="مثال: أبو محمود"
-              required
-            />
+              placeholder="مثال: أبو محمود" required />
           )}
         </div>
       </Card>
@@ -288,28 +421,17 @@ export default function NewInvoicePage() {
         <div className="space-y-3">
           {invoiceItems.map(item => (
             <div key={item.id} className="bg-gray-50 p-3 sm:p-4 rounded-lg space-y-3">
-              <Select
-                label="المنتج"
-                value={item.product_id}
+              <Select label="المنتج" value={item.product_id}
                 onChange={e => updateItem(item.id, 'product_id', e.target.value)}
                 options={products.map(p => ({ value: p.id, label: `${p.name} (متوفر: ${p.quantity})` }))}
-                placeholder="اختر المنتج"
-              />
+                placeholder="اختر المنتج" />
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                <Input
-                  label="الكمية"
-                  type="number"
-                  value={item.quantity}
+                <Input label="الكمية" type="number" value={item.quantity}
                   onChange={e => updateItem(item.id, 'quantity', parseInt(e.target.value) || 0)}
-                  min="1" max={item.available_quantity}
-                />
-                <Input
-                  label="السعر"
-                  type="number"
-                  value={item.selling_price}
+                  min="1" max={item.available_quantity} />
+                <Input label="السعر" type="number" value={item.selling_price}
                   onChange={e => updateItem(item.id, 'selling_price', parseFloat(e.target.value) || 0)}
-                  step="0.01"
-                />
+                  step="0.01" />
                 <div className="col-span-2 sm:col-span-1">
                   <label className="block text-sm font-medium text-gray-700 mb-2">الإجمالي</label>
                   <div className="px-4 py-2.5 bg-white border border-gray-300 rounded-lg font-semibold text-sm">
@@ -317,10 +439,8 @@ export default function NewInvoicePage() {
                   </div>
                 </div>
               </div>
-              <button
-                onClick={() => setInvoiceItems(prev => prev.filter(i => i.id !== item.id))}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2 text-danger-600 bg-danger-50 hover:bg-danger-100 rounded-lg text-sm transition-colors"
-              >
+              <button onClick={() => setInvoiceItems(prev => prev.filter(i => i.id !== item.id))}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2 text-danger-600 bg-danger-50 hover:bg-danger-100 rounded-lg text-sm transition-colors">
                 <Trash2 size={16} /> حذف المنتج
               </button>
             </div>
@@ -333,12 +453,8 @@ export default function NewInvoicePage() {
 
       {/* ملاحظات */}
       <Card>
-        <Input
-          label="ملاحظات (اختياري)"
-          value={notes}
-          onChange={e => setNotes(e.target.value)}
-          placeholder="أي ملاحظات على الفاتورة..."
-        />
+        <Input label="ملاحظات (اختياري)" value={notes}
+          onChange={e => setNotes(e.target.value)} placeholder="أي ملاحظات على الفاتورة..." />
       </Card>
 
       {/* الإجماليات */}
@@ -348,14 +464,8 @@ export default function NewInvoicePage() {
             <span className="font-medium text-gray-700">الإجمالي:</span>
             <span className="font-bold">{formatCurrency(total)}</span>
           </div>
-          <Input
-            label="المبلغ المدفوع"
-            type="number"
-            value={paidAmount}
-            onChange={e => setPaidAmount(e.target.value)}
-            placeholder="0.00"
-            step="0.01"
-          />
+          <Input label="المبلغ المدفوع" type="number" value={paidAmount}
+            onChange={e => setPaidAmount(e.target.value)} placeholder="0.00" step="0.01" />
           <div className="flex justify-between text-lg sm:text-xl pt-3 border-t border-primary-200">
             <span className="font-bold text-gray-700">المتبقي:</span>
             <span className={`font-bold ${remaining > 0 ? 'text-danger-600' : 'text-success-600'}`}>
@@ -369,10 +479,11 @@ export default function NewInvoicePage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pb-4">
         <Button onClick={() => handleSave(true)} variant="primary" fullWidth disabled={saving}>
           <Printer size={20} />
-          {saving ? 'جاري الحفظ...' : 'حفظ وطباعة'}
+          {saving ? 'جاري الحفظ...' : offline ? 'حفظ (بدون طباعة offline)' : 'حفظ وطباعة'}
         </Button>
         <Button onClick={() => handleSave(false)} variant="secondary" fullWidth disabled={saving}>
-          <Save size={20} /> حفظ فقط
+          <Save size={20} />
+          {saving ? 'جاري الحفظ...' : 'حفظ فقط'}
         </Button>
       </div>
 
