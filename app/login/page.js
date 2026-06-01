@@ -1,21 +1,36 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Input from '@/components/ui/Input'
 import Button from '@/components/ui/Button'
+import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { User, Lock, ShoppingBag } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 export default function LoginPage() {
   const router = useRouter()
   const supabase = createClient()
-  
-  const [formData, setFormData] = useState({
-    username: '',
-    password: ''
-  })
-  const [loading, setLoading] = useState(false)
+
+  const [formData, setFormData]       = useState({ username: '', password: '' })
+  const [loading, setLoading]         = useState(false)
+  const [checkingAuth, setCheckingAuth] = useState(true)
+
+  // ✅ إصلاح: تحقق لو اليوزر logged in يروح dashboard تلقائياً
+  useEffect(() => {
+    checkSession()
+  }, [])
+
+  async function checkSession() {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        router.replace('/dashboard')
+        return
+      }
+    } catch (e) {}
+    finally { setCheckingAuth(false) }
+  }
 
   const handleChange = (e) => {
     const { name, value } = e.target
@@ -24,36 +39,34 @@ export default function LoginPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    
+
     if (!formData.username || !formData.password) {
       toast.error('يرجى إدخال اسم المستخدم وكلمة المرور')
       return
     }
-    
+
     setLoading(true)
-    
     try {
-      // البحث عن المستخدم
-      const { data: user, error: userError } = await supabase
+      const { data: userData, error: userError } = await supabase
         .from('users')
-        .select('email, role')
-        .eq('username', formData.username)
+        .select('email')
+        .eq('username', formData.username.trim())
         .single()
 
-      if (!user) {
+      // ✅ تحسين أمان: رسالة موحدة بدل إفصاح إن username موجود/مش موجود
+      if (!userData) {
         toast.error('اسم المستخدم أو كلمة المرور غير صحيحة')
         setLoading(false)
         return
       }
 
-      // تسجيل الدخول
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: user.email,
+      const { error } = await supabase.auth.signInWithPassword({
+        email:    userData.email,
         password: formData.password,
       })
 
       if (error) {
-        toast.error('كلمة المرور غير صحيحة')
+        toast.error('اسم المستخدم أو كلمة المرور غير صحيحة')
         setLoading(false)
         return
       }
@@ -61,13 +74,20 @@ export default function LoginPage() {
       toast.success('تم تسجيل الدخول بنجاح')
       router.push('/dashboard')
       router.refresh()
-      
     } catch (error) {
       console.error('Login error:', error)
-      toast.error('حدث خطأ غير متوقع')
+      toast.error('حدث خطأ غير متوقع، حاول مجدداً')
     } finally {
       setLoading(false)
     }
+  }
+
+  if (checkingAuth) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-50 to-primary-100">
+        <LoadingSpinner size="lg" />
+      </div>
+    )
   }
 
   return (
@@ -82,10 +102,7 @@ export default function LoginPage() {
         </div>
 
         <div className="bg-white rounded-2xl shadow-xl p-8">
-          <h2 className="text-2xl font-bold text-gray-900 mb-6 text-center">
-            تسجيل الدخول
-          </h2>
-
+          <h2 className="text-2xl font-bold text-gray-900 mb-6 text-center">تسجيل الدخول</h2>
           <form onSubmit={handleSubmit} className="space-y-5">
             <Input
               label="اسم المستخدم"
@@ -97,7 +114,6 @@ export default function LoginPage() {
               icon={<User size={20} />}
               required
             />
-
             <Input
               label="كلمة المرور"
               type="password"
@@ -108,14 +124,7 @@ export default function LoginPage() {
               icon={<Lock size={20} />}
               required
             />
-
-            <Button
-              type="submit"
-              variant="primary"
-              size="lg"
-              fullWidth
-              disabled={loading}
-            >
+            <Button type="submit" variant="primary" size="lg" fullWidth disabled={loading}>
               {loading ? 'جاري تسجيل الدخول...' : 'تسجيل الدخول'}
             </Button>
           </form>
