@@ -14,31 +14,52 @@ export default function EditInvoicePage() {
   const router = useRouter()
   const params = useParams()
   const supabase = createClient()
-  
+
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
+  const [saving, setSaving]   = useState(false)
   const [paidAmount, setPaidAmount] = useState('')
-  const [notes, setNotes] = useState('')
+  const [notes, setNotes]     = useState('')
   const [invoice, setInvoice] = useState(null)
 
   useEffect(() => {
-    fetchInvoice()
+    checkRoleAndFetch()
   }, [])
+
+  async function checkRoleAndFetch() {
+    try {
+      // ✅ إصلاح: تحقق من الصلاحية قبل أي شيء
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) { router.push('/login'); return }
+
+      const { data: userData } = await supabase
+        .from('users')
+        .select('role')
+        .eq('id', user.id)
+        .single()
+
+      if (userData?.role !== 'owner') {
+        toast.error('غير مصرح لك بتعديل الفواتير')
+        router.push('/dashboard/invoices')
+        return
+      }
+
+      await fetchInvoice()
+    } catch (error) {
+      console.error('Role check error:', error)
+      router.push('/dashboard/invoices')
+    }
+  }
 
   async function fetchInvoice() {
     try {
       const { data, error } = await supabase
         .from('invoices')
-        .select(`
-          *,
-          customers (name),
-          invoice_items (*)
-        `)
+        .select(`*, customers (name), invoice_items (*)`)
         .eq('id', params.id)
         .single()
 
       if (error) throw error
-      
+
       setInvoice(data)
       setPaidAmount(data.paid_amount.toString())
       setNotes(data.notes || '')
@@ -53,11 +74,11 @@ export default function EditInvoicePage() {
 
   const handleUpdate = async () => {
     setSaving(true)
-    
     try {
-      const paid = parseFloat(paidAmount) || 0
-      const remaining = invoice.total_amount - paid
-      
+      const { data: { user } } = await supabase.auth.getUser()
+      const paid      = parseFloat(paidAmount) || 0
+      const remaining = Math.max(0, invoice.total_amount - paid)
+
       let paymentStatus = 'unpaid'
       if (paid >= invoice.total_amount) paymentStatus = 'paid'
       else if (paid > 0) paymentStatus = 'partial'
@@ -65,14 +86,27 @@ export default function EditInvoicePage() {
       const { error } = await supabase
         .from('invoices')
         .update({
-          paid_amount: paid,
+          paid_amount:      paid,
           remaining_amount: remaining,
-          payment_status: paymentStatus,
-          notes: notes
+          payment_status:   paymentStatus,
+          notes:            notes
         })
         .eq('id', params.id)
 
       if (error) throw error
+
+      // ✅ تسجيل دفعة لو الـ paid زاد عن القيمة القديمة
+      const oldPaid = parseFloat(invoice.paid_amount || 0)
+      const diff    = paid - oldPaid
+      if (diff > 0) {
+        await supabase.from('payments').insert([{
+          customer_id:    invoice.customer_id,
+          invoice_id:     invoice.id,
+          amount:         diff,
+          payment_method: 'نقدي',
+          collected_by:   user.id,
+        }])
+      }
 
       toast.success('تم تحديث الفاتورة بنجاح')
       router.push('/dashboard/invoices')
@@ -84,19 +118,17 @@ export default function EditInvoicePage() {
     }
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <LoadingSpinner size="lg" />
-      </div>
-    )
-  }
+  if (loading) return (
+    <div className="flex items-center justify-center min-h-[60vh]">
+      <LoadingSpinner size="lg" />
+    </div>
+  )
 
   if (!invoice) return null
 
-  const total = invoice.total_amount
-  const paid = parseFloat(paidAmount) || 0
-  const remaining = total - paid
+  const total     = invoice.total_amount
+  const paid      = parseFloat(paidAmount) || 0
+  const remaining = Math.max(0, total - paid)
 
   return (
     <div className="space-y-6">
@@ -116,7 +148,7 @@ export default function EditInvoicePage() {
         <div className="space-y-4">
           <div className="bg-gray-50 p-4 rounded-lg">
             <p className="text-sm text-gray-600 mb-1">العميل</p>
-            <p className="font-bold text-gray-900">{invoice.customers.name}</p>
+            <p className="font-bold text-gray-900">{invoice.customers?.name}</p>
           </div>
 
           <div className="bg-gray-50 p-4 rounded-lg">
@@ -167,21 +199,11 @@ export default function EditInvoicePage() {
           </div>
 
           <div className="flex gap-3">
-            <Button
-              onClick={handleUpdate}
-              variant="primary"
-              fullWidth
-              disabled={saving}
-            >
+            <Button onClick={handleUpdate} variant="primary" fullWidth disabled={saving}>
               <Save size={20} />
               {saving ? 'جاري الحفظ...' : 'حفظ التعديلات'}
             </Button>
-            
-            <Button
-              onClick={() => router.back()}
-              variant="secondary"
-              fullWidth
-            >
+            <Button onClick={() => router.back()} variant="secondary" fullWidth>
               إلغاء
             </Button>
           </div>
