@@ -11,44 +11,17 @@ import { formatCurrency } from '@/lib/utils/format'
 import toast from 'react-hot-toast'
 
 export default function EditInvoicePage() {
-  const router = useRouter()
-  const params = useParams()
+  const router   = useRouter()
+  const params   = useParams()
   const supabase = createClient()
 
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving]   = useState(false)
+  const [loading, setLoading]   = useState(true)
+  const [saving, setSaving]     = useState(false)
   const [paidAmount, setPaidAmount] = useState('')
-  const [notes, setNotes]     = useState('')
-  const [invoice, setInvoice] = useState(null)
+  const [notes, setNotes]       = useState('')
+  const [invoice, setInvoice]   = useState(null)
 
-  useEffect(() => {
-    checkRoleAndFetch()
-  }, [])
-
-  async function checkRoleAndFetch() {
-    try {
-      // ✅ إصلاح: تحقق من الصلاحية قبل أي شيء
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { router.push('/login'); return }
-
-      const { data: userData } = await supabase
-        .from('users')
-        .select('role')
-        .eq('id', user.id)
-        .single()
-
-      if (userData?.role !== 'owner') {
-        toast.error('غير مصرح لك بتعديل الفواتير')
-        router.push('/dashboard/invoices')
-        return
-      }
-
-      await fetchInvoice()
-    } catch (error) {
-      console.error('Role check error:', error)
-      router.push('/dashboard/invoices')
-    }
-  }
+  useEffect(() => { fetchInvoice() }, [])
 
   async function fetchInvoice() {
     try {
@@ -57,14 +30,11 @@ export default function EditInvoicePage() {
         .select(`*, customers (name), invoice_items (*)`)
         .eq('id', params.id)
         .single()
-
       if (error) throw error
-
       setInvoice(data)
       setPaidAmount(data.paid_amount.toString())
       setNotes(data.notes || '')
     } catch (error) {
-      console.error('Error fetching invoice:', error)
       toast.error('حدث خطأ في تحميل الفاتورة')
       router.push('/dashboard/invoices')
     } finally {
@@ -73,45 +43,47 @@ export default function EditInvoicePage() {
   }
 
   const handleUpdate = async () => {
+    const newPaid = parseFloat(paidAmount) || 0
+    if (newPaid < 0) { toast.error('المبلغ المدفوع لا يمكن أن يكون سالباً'); return }
+    if (newPaid > invoice.total_amount) { toast.error('المبلغ المدفوع أكبر من إجمالي الفاتورة'); return }
+
     setSaving(true)
     try {
       const { data: { user } } = await supabase.auth.getUser()
-      const paid      = parseFloat(paidAmount) || 0
-      const remaining = Math.max(0, invoice.total_amount - paid)
+      const remaining    = Math.max(0, invoice.total_amount - newPaid)
+      const paymentStatus =
+        newPaid >= invoice.total_amount ? 'paid' :
+        newPaid > 0                     ? 'partial' : 'unpaid'
 
-      let paymentStatus = 'unpaid'
-      if (paid >= invoice.total_amount) paymentStatus = 'paid'
-      else if (paid > 0) paymentStatus = 'partial'
-
+      // ✅ تحديث الفاتورة مباشرة — paid_amount الصحيح بدون trigger
       const { error } = await supabase
         .from('invoices')
         .update({
-          paid_amount:      paid,
+          paid_amount:      newPaid,
           remaining_amount: remaining,
           payment_status:   paymentStatus,
           notes:            notes
         })
         .eq('id', params.id)
-
       if (error) throw error
 
-      // ✅ تسجيل دفعة لو الـ paid زاد عن القيمة القديمة
+      // ✅ لو الـ paid زاد عن القيمة القديمة — سجّل الفرق كتحصيل جديد (للتاريخ)
       const oldPaid = parseFloat(invoice.paid_amount || 0)
-      const diff    = paid - oldPaid
+      const diff    = newPaid - oldPaid
       if (diff > 0) {
         await supabase.from('payments').insert([{
           customer_id:    invoice.customer_id,
           invoice_id:     invoice.id,
           amount:         diff,
           payment_method: 'نقدي',
-          collected_by:   user.id,
+          collected_by:   user.id
         }])
       }
 
       toast.success('تم تحديث الفاتورة بنجاح')
       router.push('/dashboard/invoices')
     } catch (error) {
-      console.error('Error updating invoice:', error)
+      console.error('Update error:', error)
       toast.error('حدث خطأ في التحديث')
     } finally {
       setSaving(false)
@@ -119,11 +91,8 @@ export default function EditInvoicePage() {
   }
 
   if (loading) return (
-    <div className="flex items-center justify-center min-h-[60vh]">
-      <LoadingSpinner size="lg" />
-    </div>
+    <div className="flex items-center justify-center min-h-[60vh]"><LoadingSpinner size="lg" /></div>
   )
-
   if (!invoice) return null
 
   const total     = invoice.total_amount
@@ -133,15 +102,10 @@ export default function EditInvoicePage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <button
-          onClick={() => router.back()}
-          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-        >
+        <button onClick={() => router.back()} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
           <ArrowRight size={24} />
         </button>
-        <h1 className="text-2xl font-bold text-gray-900">
-          تعديل فاتورة #{invoice.invoice_number}
-        </h1>
+        <h1 className="text-2xl font-bold text-gray-900">تعديل فاتورة #{invoice.invoice_number}</h1>
       </div>
 
       <Card title="تفاصيل الفاتورة">
@@ -154,22 +118,20 @@ export default function EditInvoicePage() {
           <div className="bg-gray-50 p-4 rounded-lg">
             <p className="text-sm text-gray-600 mb-2">المنتجات</p>
             <div className="space-y-2">
-              {invoice.invoice_items.map((item, index) => (
-                <div key={index} className="flex justify-between text-sm">
+              {invoice.invoice_items.map((item, i) => (
+                <div key={i} className="flex justify-between text-sm">
                   <span>{item.product_name} × {item.quantity}</span>
-                  <span className="font-semibold">
-                    {formatCurrency(item.quantity * item.selling_price)}
-                  </span>
+                  <span className="font-semibold">{formatCurrency(item.quantity * item.selling_price)}</span>
                 </div>
               ))}
             </div>
           </div>
 
           <Input
-            label="المبلغ المدفوع"
+            label={`المبلغ المدفوع (الحالي: ${formatCurrency(invoice.paid_amount)})`}
             type="number"
             value={paidAmount}
-            onChange={(e) => setPaidAmount(e.target.value)}
+            onChange={e => setPaidAmount(e.target.value)}
             step="0.01"
             max={total}
           />
@@ -177,7 +139,7 @@ export default function EditInvoicePage() {
           <Input
             label="ملاحظات"
             value={notes}
-            onChange={(e) => setNotes(e.target.value)}
+            onChange={e => setNotes(e.target.value)}
             placeholder="ملاحظات اختيارية..."
           />
 
