@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { saveToCache, getFromCache, isOnline, addToQueue } from '@/lib/offline/offlineDb'
+import { saveToCache, getFromCache, isOnline, addToQueue, generateUUID } from '@/lib/offline/offlineDb'
 import Card from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
@@ -12,16 +12,6 @@ import { Plus, Trash2, Save, Printer, ArrowRight, WifiOff } from 'lucide-react'
 import { formatCurrency } from '@/lib/utils/format'
 import { printThermalInvoice } from '@/lib/utils/exports'
 import toast from 'react-hot-toast'
-
-// توليد UUID محلي للعمليات الـ offline
-function localUUID() {
-  return 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9)
-}
-
-// توليد رقم فاتورة مؤقت للـ offline
-function localInvoiceNumber() {
-  return 'DRAFT-' + Date.now()
-}
 
 export default function NewInvoicePage() {
   const router   = useRouter()
@@ -58,43 +48,48 @@ export default function NewInvoicePage() {
     }
   }, [])
 
-  // تحميل المسودة
+  // تحميل المسودة بعد ما تتحمل البيانات
   useEffect(() => {
     if (loading) return
     try {
       const saved = localStorage.getItem('invoice_draft')
       if (!saved) return
       const draft = JSON.parse(saved)
-      toast((t) => (
-        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span>مسودة محفوظة</span>
-          <button style={{ fontWeight: 600, textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer' }}
-            onClick={() => {
-              setCustomerType(draft.customerType || 'existing')
-              setSelectedCustomer(draft.customer_id || '')
-              setTempCustomerName(draft.temp_name || '')
-              setInvoiceItems(draft.items || [])
-              setPaidAmount(draft.paid_amount || '')
-              setNotes(draft.notes || '')
-              toast.dismiss(t.id)
-            }}>استكمال</button>
-          <button style={{ color: '#666', background: 'none', border: 'none', cursor: 'pointer' }}
-            onClick={() => { localStorage.removeItem('invoice_draft'); toast.dismiss(t.id) }}>تجاهل</button>
-        </span>
-      ), { duration: 8000 })
+      toast(
+        (t) => (
+          <span style={{ display:'flex', alignItems:'center', gap:8 }}>
+            <span>مسودة محفوظة</span>
+            <button style={{ fontWeight:600, textDecoration:'underline', background:'none', border:'none', cursor:'pointer' }}
+              onClick={() => {
+                setCustomerType(draft.customerType || 'existing')
+                setSelectedCustomer(draft.customer_id || '')
+                setTempCustomerName(draft.temp_name || '')
+                setInvoiceItems(draft.items || [])
+                setPaidAmount(draft.paid_amount || '')
+                setNotes(draft.notes || '')
+                toast.dismiss(t.id)
+              }}>استكمال</button>
+            <button style={{ color:'#888', background:'none', border:'none', cursor:'pointer' }}
+              onClick={() => { localStorage.removeItem('invoice_draft'); toast.dismiss(t.id) }}>تجاهل</button>
+          </span>
+        ),
+        { duration: 8000 }
+      )
     } catch (e) { localStorage.removeItem('invoice_draft') }
   }, [loading])
 
-  // auto-save
+  // auto-save كل 30 ثانية
   useEffect(() => {
     const interval = setInterval(() => {
       const s = stateRef.current
       if (s.invoiceItems?.length > 0 && (s.selectedCustomer || s.tempCustomerName)) {
         localStorage.setItem('invoice_draft', JSON.stringify({
-          customerType: s.customerType, customer_id: s.selectedCustomer,
-          temp_name: s.tempCustomerName, items: s.invoiceItems,
-          paid_amount: s.paidAmount, notes: s.notes,
-          saved_at: new Date().toISOString()
+          customerType: s.customerType,
+          customer_id:  s.selectedCustomer,
+          temp_name:    s.tempCustomerName,
+          items:        s.invoiceItems,
+          paid_amount:  s.paidAmount,
+          notes:        s.notes,
         }))
         setDraftSaved(true)
         setTimeout(() => setDraftSaved(false), 2000)
@@ -108,51 +103,45 @@ export default function NewInvoicePage() {
     setOffline(!online)
 
     if (!online) {
-      // جيب من الـ cache المحلي
-      const [cachedCustomers, cachedProducts] = await Promise.all([
+      const [cc, cp] = await Promise.all([
         getFromCache('customers'),
-        getFromCache('products')
+        getFromCache('products'),
       ])
-      setCustomers(cachedCustomers.filter(c => c.is_active))
-      setProducts(cachedProducts.filter(p => p.is_active && p.quantity > 0))
+      setCustomers(cc.filter(c => c.is_active !== false))
+      setProducts(cp.filter(p => p.is_active !== false && (p.quantity || 0) > 0))
       setLoading(false)
       return
     }
 
     try {
-      const [{ data: customersData }, { data: productsData }] = await Promise.all([
+      const [{ data: cc }, { data: cp }] = await Promise.all([
         supabase.from('customers').select('id, name').eq('is_active', true).order('name'),
-        supabase.from('products').select('*').eq('is_active', true).gt('quantity', 0).order('name')
+        supabase.from('products').select('*').eq('is_active', true).gt('quantity', 0).order('name'),
       ])
-      const c = customersData || []
-      const p = productsData  || []
-      setCustomers(c)
-      setProducts(p)
-      // احفظ في الـ cache للاستخدام offline
-      await saveToCache('customers', c)
-      await saveToCache('products',  p)
-    } catch (error) {
-      // fallback للـ cache
+      setCustomers(cc || [])
+      setProducts(cp || [])
+      await saveToCache('customers', cc || [])
+      await saveToCache('products',  cp || [])
+    } catch {
       const [cc, cp] = await Promise.all([getFromCache('customers'), getFromCache('products')])
-      setCustomers(cc.filter(c => c.is_active))
-      setProducts(cp.filter(p => p.is_active && p.quantity > 0))
-      toast.error('تم تحميل البيانات من الجهاز')
+      setCustomers(cc.filter(c => c.is_active !== false))
+      setProducts(cp.filter(p => p.is_active !== false && (p.quantity || 0) > 0))
     } finally {
       setLoading(false)
     }
   }
 
-  const addItem = () => setInvoiceItems(prev => [...prev, {
+  const addItem = () => setInvoiceItems(p => [...p, {
     id: Date.now(), product_id: '', product_name: '',
     quantity: 1, cost_price: 0, selling_price: 0, available_quantity: 0
   }])
 
   const updateItem = (itemId, field, value) => {
-    setInvoiceItems(prev => prev.map(item => {
+    setInvoiceItems(p => p.map(item => {
       if (item.id !== itemId) return item
       let u = { ...item, [field]: value }
       if (field === 'product_id' && value) {
-        const p = products.find(p => p.id === value)
+        const p = products.find(x => x.id === value)
         if (p) u = { ...u, product_name: p.name, cost_price: p.cost_price, selling_price: p.selling_price, available_quantity: p.quantity }
       }
       return u
@@ -181,61 +170,54 @@ export default function NewInvoicePage() {
     return true
   }
 
-  // ✅ حفظ offline — يحفظ محلياً ويضيف للـ queue
+  // ✅ حفظ offline — UUID صح + queue
   const saveOffline = async () => {
     const { total, paid, remaining } = getTotals()
     const paymentStatus = paid >= total ? 'paid' : paid > 0 ? 'partial' : 'unpaid'
     const now           = new Date().toISOString()
 
-    // عميل مؤقت — أضفه في cache + queue
     let finalCustomerId = selectedCustomer
     let customerName    = customers.find(c => c.id === selectedCustomer)?.name || ''
 
     if (customerType === 'temporary') {
-      const tempId = localUUID()
-      const tempCustomer = {
-        id:         tempId,
-        name:       tempCustomerName.trim(),
-        phone:      'مؤقت',
-        is_active:  false,
-        total_debt: remaining,
-        created_at: now
+      // ✅ UUID صح من الأول — مش local_xxx
+      const newId = generateUUID()
+      const newCustomer = {
+        id: newId, name: tempCustomerName.trim(),
+        phone: 'مؤقت', is_active: false,
+        total_debt: remaining, created_at: now,
       }
-      // احفظ في الـ cache المحلي
-      const cachedCustomers = await getFromCache('customers')
-      await saveToCache('customers', [...cachedCustomers, tempCustomer])
-      // أضف للـ queue عشان يترفع لما النت يرجع
-      await addToQueue('customers', 'insert', tempCustomer)
-      finalCustomerId = tempId
+      const cached = await getFromCache('customers')
+      await saveToCache('customers', [...cached, newCustomer])
+      await addToQueue('customers', 'insert', newCustomer)
+      finalCustomerId = newId
       customerName    = tempCustomerName.trim()
     }
 
-    // أنشئ الفاتورة محلياً
-    const invoiceId     = localUUID()
-    const invoiceNumber = localInvoiceNumber()
-    const invoiceData   = {
+    const invoiceId     = generateUUID()
+    const invoiceNumber = `DRAFT-${Date.now()}`
+
+    const invoiceData = {
       id:               invoiceId,
       invoice_number:   invoiceNumber,
       customer_id:      finalCustomerId,
+      customer_name:    customerName,
       total_amount:     total,
       paid_amount:      paid,
       remaining_amount: remaining,
       payment_status:   paymentStatus,
-      notes:            notes,
+      notes,
       created_at:       now,
-      customer_name:    customerName,
     }
 
-    // احفظ في الـ cache
+    // حفظ في cache + queue
     const cachedInvoices = await getFromCache('invoices')
     await saveToCache('invoices', [invoiceData, ...cachedInvoices])
-
-    // أضف الفاتورة للـ queue
     await addToQueue('invoices', 'insert', invoiceData)
 
-    // أضف البنود للـ queue
+    // بنود الفاتورة
     const items = invoiceItems.map(item => ({
-      id:            localUUID(),
+      id:            generateUUID(),
       invoice_id:    invoiceId,
       product_id:    item.product_id,
       product_name:  item.product_name,
@@ -243,105 +225,97 @@ export default function NewInvoicePage() {
       cost_price:    parseFloat(item.cost_price   || 0),
       selling_price: parseFloat(item.selling_price || 0),
       total:         item.quantity * parseFloat(item.selling_price || 0),
-      profit:        (parseFloat(item.selling_price || 0) - parseFloat(item.cost_price || 0)) * item.quantity
+      profit:        (parseFloat(item.selling_price || 0) - parseFloat(item.cost_price || 0)) * item.quantity,
     }))
-    for (const item of items) {
-      await addToQueue('invoice_items', 'insert', item)
-    }
 
-    // أضف الدفعة للـ queue لو فيه
+    const cachedItems = await getFromCache('invoice_items')
+    await saveToCache('invoice_items', [...cachedItems, ...items])
+    for (const item of items) await addToQueue('invoice_items', 'insert', item)
+
+    // دفعة
     if (paid > 0) {
-      await addToQueue('payments', 'insert', {
-        id:             localUUID(),
+      const paymentData = {
+        id:             generateUUID(),
         customer_id:    finalCustomerId,
         invoice_id:     invoiceId,
         amount:         paid,
         payment_method: 'نقدي',
         created_at:     now,
-      })
+      }
+      const cachedPayments = await getFromCache('payments')
+      await saveToCache('payments', [...cachedPayments, paymentData])
+      await addToQueue('payments', 'insert', paymentData)
     }
 
     // خصم المخزون محلياً
     const cachedProducts = await getFromCache('products')
-    const updatedProducts = cachedProducts.map(p => {
+    await saveToCache('products', cachedProducts.map(p => {
       const item = invoiceItems.find(i => i.product_id === p.id)
-      if (!item) return p
-      return { ...p, quantity: Math.max(0, p.quantity - item.quantity) }
-    })
-    await saveToCache('products', updatedProducts)
+      return item ? { ...p, quantity: Math.max(0, p.quantity - item.quantity) } : p
+    }))
 
     localStorage.removeItem('invoice_draft')
-    toast.success('✓ تم حفظ الفاتورة — سيتم الرفع عند عودة الإنترنت')
+    toast.success('✓ تم الحفظ — سيُرفع تلقائياً عند عودة الإنترنت')
     router.push('/dashboard/invoices')
   }
 
-  // ✅ حفظ online — المسار العادي
+  // ✅ حفظ online
   const saveOnline = async (printAfter = false) => {
-    try {
-      const { data: { user } } = await supabase.auth.getUser()
-      const { total, paid, remaining } = getTotals()
-      const { data: invoiceNumber }    = await supabase.rpc('generate_invoice_number')
-      const paymentStatus = paid >= total ? 'paid' : paid > 0 ? 'partial' : 'unpaid'
+    const { data: { user } }      = await supabase.auth.getUser()
+    const { total, paid, remaining } = getTotals()
+    const { data: invoiceNumber } = await supabase.rpc('generate_invoice_number')
+    const paymentStatus = paid >= total ? 'paid' : paid > 0 ? 'partial' : 'unpaid'
 
-      let finalCustomerId = selectedCustomer
-      let customerName    = customers.find(c => c.id === selectedCustomer)?.name || ''
+    let finalCustomerId = selectedCustomer
+    let customerName    = customers.find(c => c.id === selectedCustomer)?.name || ''
 
-      if (customerType === 'temporary') {
-        const { data: newCust, error: custErr } = await supabase
-          .from('customers')
-          .insert([{ name: tempCustomerName.trim(), phone: 'مؤقت', is_active: false, created_by: user.id }])
-          .select().single()
-        if (custErr) throw custErr
-        finalCustomerId = newCust.id
-        customerName    = tempCustomerName.trim()
-      }
-
-      const { data: invoice, error: invErr } = await supabase
-        .from('invoices')
-        .insert([{
-          invoice_number:   invoiceNumber || `INV-${Date.now()}`,
-          customer_id:      finalCustomerId,
-          total_amount:     total,
-          paid_amount:      paid,
-          remaining_amount: remaining,
-          payment_status:   paymentStatus,
-          notes, created_by: user.id
-        }])
+    if (customerType === 'temporary') {
+      const { data: newCust, error } = await supabase
+        .from('customers')
+        .insert([{ name: tempCustomerName.trim(), phone: 'مؤقت', is_active: false, created_by: user.id }])
         .select().single()
-      if (invErr) throw invErr
-
-      const items = invoiceItems.map(item => ({
-        invoice_id:    invoice.id,
-        product_id:    item.product_id,
-        product_name:  item.product_name,
-        quantity:      item.quantity,
-        cost_price:    parseFloat(item.cost_price   || 0),
-        selling_price: parseFloat(item.selling_price || 0),
-        total:         item.quantity * parseFloat(item.selling_price || 0),
-        profit:        (parseFloat(item.selling_price || 0) - parseFloat(item.cost_price || 0)) * item.quantity
-      }))
-      const { error: itemsErr } = await supabase.from('invoice_items').insert(items)
-      if (itemsErr) throw itemsErr
-
-      if (paid > 0) {
-        await supabase.from('payments').insert([{
-          customer_id:    finalCustomerId,
-          invoice_id:     invoice.id,
-          amount:         paid,
-          payment_method: 'نقدي',
-          collected_by:   user.id
-        }])
-      }
-
-      localStorage.removeItem('invoice_draft')
-      toast.success('تم حفظ الفاتورة بنجاح')
-      if (printAfter) printThermalInvoice({ ...invoice, customer_name: customerName, items })
-      router.push('/dashboard/invoices')
-      router.refresh()
-    } catch (error) {
-      console.error(error)
-      throw error
+      if (error) throw error
+      finalCustomerId = newCust.id
+      customerName    = tempCustomerName.trim()
     }
+
+    const { data: invoice, error: invErr } = await supabase
+      .from('invoices')
+      .insert([{
+        invoice_number: invoiceNumber || `INV-${Date.now()}`,
+        customer_id:    finalCustomerId,
+        total_amount:   total, paid_amount: paid,
+        remaining_amount: remaining, payment_status: paymentStatus,
+        notes, created_by: user.id,
+      }])
+      .select().single()
+    if (invErr) throw invErr
+
+    const items = invoiceItems.map(item => ({
+      invoice_id:    invoice.id,
+      product_id:    item.product_id,
+      product_name:  item.product_name,
+      quantity:      item.quantity,
+      cost_price:    parseFloat(item.cost_price   || 0),
+      selling_price: parseFloat(item.selling_price || 0),
+      total:         item.quantity * parseFloat(item.selling_price || 0),
+      profit:        (parseFloat(item.selling_price || 0) - parseFloat(item.cost_price || 0)) * item.quantity,
+    }))
+    const { error: itemsErr } = await supabase.from('invoice_items').insert(items)
+    if (itemsErr) throw itemsErr
+
+    if (paid > 0) {
+      await supabase.from('payments').insert([{
+        customer_id: finalCustomerId, invoice_id: invoice.id,
+        amount: paid, payment_method: 'نقدي', collected_by: user.id,
+      }])
+    }
+
+    localStorage.removeItem('invoice_draft')
+    toast.success('تم حفظ الفاتورة بنجاح')
+    if (printAfter) printThermalInvoice({ ...invoice, customer_name: customerName, items })
+    router.push('/dashboard/invoices')
+    router.refresh()
   }
 
   const handleSave = async (printAfter = false) => {
@@ -353,13 +327,9 @@ export default function NewInvoicePage() {
       } else {
         await saveOnline(printAfter)
       }
-    } catch (error) {
-      // لو فشل online جرب offline
-      if (!isOnline()) {
-        await saveOffline()
-      } else {
-        toast.error('حدث خطأ في حفظ الفاتورة')
-      }
+    } catch (err) {
+      console.error(err)
+      toast.error('حدث خطأ في حفظ الفاتورة')
     } finally {
       setSaving(false)
     }
@@ -373,11 +343,12 @@ export default function NewInvoicePage() {
 
   return (
     <div className="space-y-4 sm:space-y-6 pb-safe">
+      {/* Header */}
       <div className="flex items-center gap-3">
         <button onClick={() => router.back()} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
           <ArrowRight size={24} />
         </button>
-        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">إنشاء فاتورة جديدة</h1>
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">فاتورة جديدة</h1>
         {offline && (
           <span className="flex items-center gap-1 text-xs bg-yellow-100 text-yellow-700 px-2 py-1 rounded-full">
             <WifiOff size={12} /> بدون نت
@@ -385,17 +356,16 @@ export default function NewInvoicePage() {
         )}
       </div>
 
-      {/* نوع العميل */}
+      {/* العميل */}
       <Card title="بيانات العميل">
         <div className="space-y-4">
           <div className="flex gap-3 p-3 bg-gray-50 rounded-lg">
-            {['existing','temporary'].map(type => (
-              <button key={type} onClick={() => setCustomerType(type)}
-                className={`flex-1 px-4 py-2 rounded-lg font-medium transition-colors text-sm ${
-                  customerType === type ? 'bg-primary-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'
-                }`}
-              >
-                {type === 'existing' ? 'عميل مسجل' : 'عميل مؤقت'}
+            {['existing','temporary'].map(t => (
+              <button key={t} onClick={() => setCustomerType(t)}
+                className={`flex-1 px-4 py-2 rounded-lg font-medium text-sm transition-colors ${
+                  customerType === t ? 'bg-primary-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'
+                }`}>
+                {t === 'existing' ? 'عميل مسجل' : 'عميل مؤقت'}
               </button>
             ))}
           </div>
@@ -416,7 +386,7 @@ export default function NewInvoicePage() {
       <Card>
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-semibold text-gray-900">المنتجات</h3>
-          <Button onClick={addItem} size="sm"><Plus size={18} /> إضافة منتج</Button>
+          <Button onClick={addItem} size="sm"><Plus size={18} /> إضافة</Button>
         </div>
         <div className="space-y-3">
           {invoiceItems.map(item => (
@@ -439,14 +409,14 @@ export default function NewInvoicePage() {
                   </div>
                 </div>
               </div>
-              <button onClick={() => setInvoiceItems(prev => prev.filter(i => i.id !== item.id))}
+              <button onClick={() => setInvoiceItems(p => p.filter(i => i.id !== item.id))}
                 className="w-full flex items-center justify-center gap-2 px-4 py-2 text-danger-600 bg-danger-50 hover:bg-danger-100 rounded-lg text-sm transition-colors">
                 <Trash2 size={16} /> حذف المنتج
               </button>
             </div>
           ))}
           {invoiceItems.length === 0 && (
-            <div className="text-center py-8 text-gray-500 text-sm">لم تقم بإضافة أي منتجات بعد</div>
+            <p className="text-center py-8 text-gray-400 text-sm">لم تقم بإضافة أي منتجات بعد</p>
           )}
         </div>
       </Card>
@@ -475,11 +445,11 @@ export default function NewInvoicePage() {
         </div>
       </Card>
 
-      {/* أزرار الحفظ */}
+      {/* أزرار */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pb-4">
         <Button onClick={() => handleSave(true)} variant="primary" fullWidth disabled={saving}>
           <Printer size={20} />
-          {saving ? 'جاري الحفظ...' : offline ? 'حفظ (بدون طباعة offline)' : 'حفظ وطباعة'}
+          {saving ? 'جاري الحفظ...' : offline ? 'حفظ بدون طباعة' : 'حفظ وطباعة'}
         </Button>
         <Button onClick={() => handleSave(false)} variant="secondary" fullWidth disabled={saving}>
           <Save size={20} />
@@ -489,7 +459,7 @@ export default function NewInvoicePage() {
 
       {draftSaved && (
         <div className="fixed bottom-20 left-4 lg:bottom-4 bg-success-600 text-white px-4 py-2 rounded-lg shadow-lg text-sm z-50">
-          ✓ تم الحفظ تلقائياً
+          ✓ تم الحفظ التلقائي
         </div>
       )}
     </div>
