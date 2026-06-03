@@ -6,7 +6,7 @@ import { LayoutDashboard, Package, FileText, Users, DollarSign } from 'lucide-re
 const items = [
   { title: 'الرئيسية',  icon: LayoutDashboard, href: '/dashboard' },
   { title: 'المنتجات',  icon: Package,          href: '/dashboard/products' },
-  { title: 'فاتورة',    icon: FileText,          href: '/dashboard/invoices/new' },
+  { title: 'فاتورة',    icon: FileText,          href: '/dashboard/invoices' },
   { title: 'العملاء',   icon: Users,             href: '/dashboard/customers' },
   { title: 'التحصيل',   icon: DollarSign,        href: '/dashboard/payments' },
 ]
