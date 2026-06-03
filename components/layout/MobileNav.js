@@ -1,20 +1,18 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, Package, FileText, Users } from 'lucide-react'
+import { LayoutDashboard, Package, FileText, Users, DollarSign } from 'lucide-react'
 
-// ✅ يستخدم Next.js Link بدل router.push
-// Link بيعمل client-side navigation — مش reload كامل
-// يعني لو الصفحة متحفظة في الـ JS bundle هيشتغل حتى offline
+const items = [
+  { title: 'الرئيسية',  icon: LayoutDashboard, href: '/dashboard' },
+  { title: 'المنتجات',  icon: Package,          href: '/dashboard/products' },
+  { title: 'فاتورة',    icon: FileText,          href: '/dashboard/invoices/new' },
+  { title: 'العملاء',   icon: Users,             href: '/dashboard/customers' },
+  { title: 'التحصيل',   icon: DollarSign,        href: '/dashboard/payments' },
+]
+
 export default function MobileNav() {
   const pathname = usePathname()
-
-  const items = [
-    { title: 'الرئيسية', icon: LayoutDashboard, href: '/dashboard' },
-    { title: 'المنتجات', icon: Package,          href: '/dashboard/products' },
-    { title: 'الفواتير', icon: FileText,          href: '/dashboard/invoices' },
-    { title: 'العملاء',  icon: Users,             href: '/dashboard/customers' },
-  ]
 
   const isActive = (href) =>
     href === '/dashboard' ? pathname === href : pathname.startsWith(href)
@@ -29,7 +27,7 @@ export default function MobileNav() {
               key={href}
               href={href}
               prefetch={false}
-              className={`flex flex-col items-center justify-center gap-1 flex-1 h-full transition-colors ${
+              className={`flex flex-col items-center justify-center gap-0.5 flex-1 h-full transition-colors ${
                 active ? 'text-primary-600' : 'text-gray-500'
               }`}
             >
