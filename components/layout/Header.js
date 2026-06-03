@@ -1,130 +1,91 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Menu, Bell, Search, X } from 'lucide-react'
-import Input from '@/components/ui/Input'
-import { createClient } from '@/lib/supabase/client'
 
-export default function Header({ onMenuClick, title = 'الرئيسية' }) {
+export default function Header({ onMenuClick }) {
   const router = useRouter()
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [unreadCount, setUnreadCount] = useState(0)
-
-  useEffect(() => {
-    checkUnreadNotifications()
-  }, [])
-
-  async function checkUnreadNotifications() {
-    try {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      
-      if (user) {
-        const { count } = await supabase
-          .from('notifications')
-          .select('*', { count: 'exact', head: true })
-          .eq('user_id', user.id)
-          .eq('is_read', false)
-        
-        setUnreadCount(count || 0)
-      }
-    } catch (error) {
-      console.error('Error checking notifications:', error)
-    }
-  }
 
   const handleSearch = (e) => {
     e.preventDefault()
     if (searchQuery.trim()) {
-      router.push(`/dashboard/search?q=${encodeURIComponent(searchQuery)}`)
+      router.push(`/dashboard/search?q=${encodeURIComponent(searchQuery.trim())}`)
       setSearchOpen(false)
       setSearchQuery('')
     }
   }
 
   return (
-    <header className="h-16 bg-white border-b border-gray-200 sticky top-0 z-30">
+    <header className="h-16 bg-white border-b border-gray-200 sticky top-0 z-30 flex-shrink-0">
       <div className="h-full px-4 flex items-center justify-between">
-        {/* Right Side */}
-        <div className="flex items-center gap-4">
-          {/* Mobile Menu Button */}
+
+        {/* Right */}
+        <div className="flex items-center gap-3">
           <button
             onClick={onMenuClick}
             className="lg:hidden p-2 hover:bg-gray-100 rounded-lg transition-colors"
           >
             <Menu size={24} className="text-gray-700" />
           </button>
-
-          {/* Page Title */}
-          <h2 className="text-xl font-bold text-gray-900">
-            {title}
-          </h2>
         </div>
 
-        {/* Left Side */}
-        <div className="flex items-center gap-3">
-          {/* Search - Desktop */}
-          <div className="hidden lg:block">
-            <form onSubmit={handleSearch} className="relative">
-              <Input
+        {/* Left */}
+        <div className="flex items-center gap-2">
+          {/* Desktop Search */}
+          <form onSubmit={handleSearch} className="hidden lg:flex items-center">
+            <div className="relative">
+              <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
                 type="text"
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="بحث عن منتج، عميل، فاتورة..."
-                className="w-64"
-                icon={<Search size={18} />}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="بحث..."
+                className="pr-9 pl-4 py-2 border border-gray-300 rounded-lg text-sm w-56 focus:outline-none focus:border-primary-500"
               />
-            </form>
-          </div>
+            </div>
+          </form>
 
-          {/* Search Button (Mobile) */}
-          <button 
-            onClick={() => setSearchOpen(!searchOpen)}
+          {/* Mobile Search */}
+          <button
+            onClick={() => setSearchOpen(p => !p)}
             className="lg:hidden p-2 hover:bg-gray-100 rounded-lg transition-colors"
           >
             <Search size={20} className="text-gray-600" />
           </button>
 
           {/* Notifications */}
-          <button 
+          <button
             onClick={() => router.push('/dashboard/notifications')}
-            className="relative p-2 hover:bg-gray-100 rounded-lg transition-colors"
+            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
           >
             <Bell size={20} className="text-gray-600" />
-            {unreadCount > 0 && (
-              <span className="absolute top-1 left-1 w-2 h-2 bg-danger-500 rounded-full"></span>
-            )}
           </button>
-
-          {/* User Avatar (Desktop) */}
-          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-gray-100 rounded-lg">
-            <div className="w-8 h-8 bg-primary-600 rounded-full flex items-center justify-center">
-              <span className="text-white text-sm font-semibold">أ</span>
-            </div>
-            <span className="text-sm font-medium text-gray-700">أيمن</span>
-          </div>
         </div>
       </div>
 
       {/* Mobile Search Bar */}
       {searchOpen && (
-        <div className="lg:hidden absolute top-16 left-0 right-0 bg-white border-b border-gray-200 p-4 shadow-lg z-50">
-          <form onSubmit={handleSearch} className="relative">
-            <Input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="بحث..."
-              autoFocus
-              icon={<Search size={18} />}
-            />
+        <div className="lg:hidden absolute top-16 left-0 right-0 bg-white border-b border-gray-200 p-3 shadow-lg z-50">
+          <form onSubmit={handleSearch} className="flex gap-2">
+            <div className="relative flex-1">
+              <Search size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="بحث عن منتج أو عميل أو فاتورة..."
+                autoFocus
+                className="w-full pr-8 pl-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-primary-500"
+              />
+            </div>
             <button
               type="button"
               onClick={() => setSearchOpen(false)}
-              className="absolute left-3 top-1/2 -translate-y-1/2 p-1 hover:bg-gray-100 rounded"
+              className="p-2 hover:bg-gray-100 rounded-lg"
             >
-              <X size={18} />
+              <X size={20} className="text-gray-500" />
             </button>
           </form>
         </div>
