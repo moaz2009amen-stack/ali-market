@@ -2,13 +2,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { saveToCache, getFromCache, isOnline, addToQueue, generateUUID } from '@/lib/offline/offlineDb'
 import Card from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
 import Select from '@/components/ui/Select'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import { Plus, Trash2, Save, Printer, ArrowRight, WifiOff } from 'lucide-react'
+import { Plus, Trash2, Save, Printer, ArrowRight } from 'lucide-react'
 import { formatCurrency } from '@/lib/utils/format'
 import { printThermalInvoice } from '@/lib/utils/exports'
 import toast from 'react-hot-toast'
@@ -19,7 +18,6 @@ export default function NewInvoicePage() {
 
   const [loading, setLoading]           = useState(true)
   const [saving, setSaving]             = useState(false)
-  const [offline, setOffline]           = useState(false)
   const [customers, setCustomers]       = useState([])
   const [products, setProducts]         = useState([])
   const [customerType, setCustomerType] = useState('existing')
@@ -35,20 +33,9 @@ export default function NewInvoicePage() {
     stateRef.current = { customerType, selectedCustomer, tempCustomerName, invoiceItems, paidAmount, notes }
   })
 
-  useEffect(() => {
-    fetchInitialData()
-    setOffline(!navigator.onLine)
-    const onOnline  = () => setOffline(false)
-    const onOffline = () => setOffline(true)
-    window.addEventListener('online',  onOnline)
-    window.addEventListener('offline', onOffline)
-    return () => {
-      window.removeEventListener('online',  onOnline)
-      window.removeEventListener('offline', onOffline)
-    }
-  }, [])
+  useEffect(() => { fetchInitialData() }, [])
 
-  // تحميل المسودة بعد ما تتحمل البيانات
+  // تحميل المسودة
   useEffect(() => {
     if (loading) return
     try {
@@ -84,12 +71,9 @@ export default function NewInvoicePage() {
       const s = stateRef.current
       if (s.invoiceItems?.length > 0 && (s.selectedCustomer || s.tempCustomerName)) {
         localStorage.setItem('invoice_draft', JSON.stringify({
-          customerType: s.customerType,
-          customer_id:  s.selectedCustomer,
-          temp_name:    s.tempCustomerName,
-          items:        s.invoiceItems,
-          paid_amount:  s.paidAmount,
-          notes:        s.notes,
+          customerType: s.customerType, customer_id: s.selectedCustomer,
+          temp_name: s.tempCustomerName, items: s.invoiceItems,
+          paid_amount: s.paidAmount, notes: s.notes,
         }))
         setDraftSaved(true)
         setTimeout(() => setDraftSaved(false), 2000)
@@ -99,20 +83,6 @@ export default function NewInvoicePage() {
   }, [])
 
   async function fetchInitialData() {
-    const online = isOnline()
-    setOffline(!online)
-
-    if (!online) {
-      const [cc, cp] = await Promise.all([
-        getFromCache('customers'),
-        getFromCache('products'),
-      ])
-      setCustomers(cc.filter(c => c.is_active !== false))
-      setProducts(cp.filter(p => p.is_active !== false && (p.quantity || 0) > 0))
-      setLoading(false)
-      return
-    }
-
     try {
       const [{ data: cc }, { data: cp }] = await Promise.all([
         supabase.from('customers').select('id, name').eq('is_active', true).order('name'),
@@ -120,12 +90,8 @@ export default function NewInvoicePage() {
       ])
       setCustomers(cc || [])
       setProducts(cp || [])
-      await saveToCache('customers', cc || [])
-      await saveToCache('products',  cp || [])
-    } catch {
-      const [cc, cp] = await Promise.all([getFromCache('customers'), getFromCache('products')])
-      setCustomers(cc.filter(c => c.is_active !== false))
-      setProducts(cp.filter(p => p.is_active !== false && (p.quantity || 0) > 0))
+    } catch (error) {
+      toast.error(`حدث خطأ في تحميل البيانات: ${error.message}`)
     } finally {
       setLoading(false)
     }
@@ -170,166 +136,75 @@ export default function NewInvoicePage() {
     return true
   }
 
-  // ✅ حفظ offline — UUID صح + queue
-  const saveOffline = async () => {
-    const { total, paid, remaining } = getTotals()
-    const paymentStatus = paid >= total ? 'paid' : paid > 0 ? 'partial' : 'unpaid'
-    const now           = new Date().toISOString()
-
-    let finalCustomerId = selectedCustomer
-    let customerName    = customers.find(c => c.id === selectedCustomer)?.name || ''
-
-    if (customerType === 'temporary') {
-      // ✅ UUID صح من الأول — مش local_xxx
-      const newId = generateUUID()
-      const newCustomer = {
-        id: newId, name: tempCustomerName.trim(),
-        phone: 'مؤقت', is_active: false,
-        total_debt: remaining, created_at: now,
-      }
-      const cached = await getFromCache('customers')
-      await saveToCache('customers', [...cached, newCustomer])
-      await addToQueue('customers', 'insert', newCustomer)
-      finalCustomerId = newId
-      customerName    = tempCustomerName.trim()
-    }
-
-    const invoiceId     = generateUUID()
-    const invoiceNumber = `DRAFT-${Date.now()}`
-
-    const invoiceData = {
-      id:               invoiceId,
-      invoice_number:   invoiceNumber,
-      customer_id:      finalCustomerId,
-      customer_name:    customerName,
-      total_amount:     total,
-      paid_amount:      paid,
-      remaining_amount: remaining,
-      payment_status:   paymentStatus,
-      notes,
-      created_at:       now,
-    }
-
-    // حفظ في cache + queue
-    const cachedInvoices = await getFromCache('invoices')
-    await saveToCache('invoices', [invoiceData, ...cachedInvoices])
-    await addToQueue('invoices', 'insert', invoiceData)
-
-    // بنود الفاتورة
-    const items = invoiceItems.map(item => ({
-      id:            generateUUID(),
-      invoice_id:    invoiceId,
-      product_id:    item.product_id,
-      product_name:  item.product_name,
-      quantity:      item.quantity,
-      cost_price:    parseFloat(item.cost_price   || 0),
-      selling_price: parseFloat(item.selling_price || 0),
-      total:         item.quantity * parseFloat(item.selling_price || 0),
-      profit:        (parseFloat(item.selling_price || 0) - parseFloat(item.cost_price || 0)) * item.quantity,
-    }))
-
-    const cachedItems = await getFromCache('invoice_items')
-    await saveToCache('invoice_items', [...cachedItems, ...items])
-    for (const item of items) await addToQueue('invoice_items', 'insert', item)
-
-    // دفعة
-    if (paid > 0) {
-      const paymentData = {
-        id:             generateUUID(),
-        customer_id:    finalCustomerId,
-        invoice_id:     invoiceId,
-        amount:         paid,
-        payment_method: 'نقدي',
-        created_at:     now,
-      }
-      const cachedPayments = await getFromCache('payments')
-      await saveToCache('payments', [...cachedPayments, paymentData])
-      await addToQueue('payments', 'insert', paymentData)
-    }
-
-    // خصم المخزون محلياً
-    const cachedProducts = await getFromCache('products')
-    await saveToCache('products', cachedProducts.map(p => {
-      const item = invoiceItems.find(i => i.product_id === p.id)
-      return item ? { ...p, quantity: Math.max(0, p.quantity - item.quantity) } : p
-    }))
-
-    localStorage.removeItem('invoice_draft')
-    toast.success('✓ تم الحفظ — سيُرفع تلقائياً عند عودة الإنترنت')
-    router.push('/dashboard/invoices')
-  }
-
-  // ✅ حفظ online
-  const saveOnline = async (printAfter = false) => {
-    const { data: { user } }      = await supabase.auth.getUser()
-    const { total, paid, remaining } = getTotals()
-    const { data: invoiceNumber } = await supabase.rpc('generate_invoice_number')
-    const paymentStatus = paid >= total ? 'paid' : paid > 0 ? 'partial' : 'unpaid'
-
-    let finalCustomerId = selectedCustomer
-    let customerName    = customers.find(c => c.id === selectedCustomer)?.name || ''
-
-    if (customerType === 'temporary') {
-      const { data: newCust, error } = await supabase
-        .from('customers')
-        .insert([{ name: tempCustomerName.trim(), phone: 'مؤقت', is_active: false, created_by: user.id }])
-        .select().single()
-      if (error) throw error
-      finalCustomerId = newCust.id
-      customerName    = tempCustomerName.trim()
-    }
-
-    const { data: invoice, error: invErr } = await supabase
-      .from('invoices')
-      .insert([{
-        invoice_number: invoiceNumber || `INV-${Date.now()}`,
-        customer_id:    finalCustomerId,
-        total_amount:   total, paid_amount: paid,
-        remaining_amount: remaining, payment_status: paymentStatus,
-        notes, created_by: user.id,
-      }])
-      .select().single()
-    if (invErr) throw invErr
-
-    const items = invoiceItems.map(item => ({
-      invoice_id:    invoice.id,
-      product_id:    item.product_id,
-      product_name:  item.product_name,
-      quantity:      item.quantity,
-      cost_price:    parseFloat(item.cost_price   || 0),
-      selling_price: parseFloat(item.selling_price || 0),
-      total:         item.quantity * parseFloat(item.selling_price || 0),
-      profit:        (parseFloat(item.selling_price || 0) - parseFloat(item.cost_price || 0)) * item.quantity,
-    }))
-    const { error: itemsErr } = await supabase.from('invoice_items').insert(items)
-    if (itemsErr) throw itemsErr
-
-    if (paid > 0) {
-      await supabase.from('payments').insert([{
-        customer_id: finalCustomerId, invoice_id: invoice.id,
-        amount: paid, payment_method: 'نقدي', collected_by: user.id,
-      }])
-    }
-
-    localStorage.removeItem('invoice_draft')
-    toast.success('تم حفظ الفاتورة بنجاح')
-    if (printAfter) printThermalInvoice({ ...invoice, customer_name: customerName, items })
-    router.push('/dashboard/invoices')
-    router.refresh()
-  }
-
   const handleSave = async (printAfter = false) => {
     if (!validate()) return
     setSaving(true)
     try {
-      if (!isOnline()) {
-        await saveOffline()
-      } else {
-        await saveOnline(printAfter)
+      const { total, paid, remaining } = getTotals()
+      const { data: invoiceNumber }    = await supabase.rpc('generate_invoice_number')
+      const paymentStatus = paid >= total ? 'paid' : paid > 0 ? 'partial' : 'unpaid'
+
+      let finalCustomerId = selectedCustomer
+      let customerName    = customers.find(c => c.id === selectedCustomer)?.name || ''
+
+      // ✅ عميل مؤقت بدون created_by
+      if (customerType === 'temporary') {
+        const { data: newCust, error: custErr } = await supabase
+          .from('customers')
+          .insert([{ name: tempCustomerName.trim(), phone: 'مؤقت', is_active: false }])
+          .select().single()
+        if (custErr) throw custErr
+        finalCustomerId = newCust.id
+        customerName    = tempCustomerName.trim()
       }
-    } catch (err) {
-      console.error(err)
-      toast.error('حدث خطأ في حفظ الفاتورة')
+
+      // ✅ حفظ الفاتورة بدون created_by
+      const { data: invoice, error: invErr } = await supabase
+        .from('invoices')
+        .insert([{
+          invoice_number:   invoiceNumber || `INV-${Date.now()}`,
+          customer_id:      finalCustomerId,
+          total_amount:     total,
+          paid_amount:      paid,
+          remaining_amount: remaining,
+          payment_status:   paymentStatus,
+          notes,
+        }])
+        .select().single()
+      if (invErr) throw invErr
+
+      // بنود الفاتورة
+      const items = invoiceItems.map(item => ({
+        invoice_id:    invoice.id,
+        product_id:    item.product_id,
+        product_name:  item.product_name,
+        quantity:      item.quantity,
+        cost_price:    parseFloat(item.cost_price   || 0),
+        selling_price: parseFloat(item.selling_price || 0),
+        total:         item.quantity * parseFloat(item.selling_price || 0),
+        profit:        (parseFloat(item.selling_price || 0) - parseFloat(item.cost_price || 0)) * item.quantity,
+      }))
+      const { error: itemsErr } = await supabase.from('invoice_items').insert(items)
+      if (itemsErr) throw itemsErr
+
+      // ✅ تسجيل الدفعة بدون collected_by
+      if (paid > 0) {
+        await supabase.from('payments').insert([{
+          customer_id:    finalCustomerId,
+          invoice_id:     invoice.id,
+          amount:         paid,
+          payment_method: 'نقدي',
+        }])
+      }
+
+      localStorage.removeItem('invoice_draft')
+      toast.success('تم حفظ الفاتورة بنجاح')
+      if (printAfter) printThermalInvoice({ ...invoice, customer_name: customerName, items })
+      router.push('/dashboard/invoices')
+      router.refresh()
+    } catch (error) {
+      console.error(error)
+      toast.error(`حدث خطأ: ${error.message}`)
     } finally {
       setSaving(false)
     }
@@ -343,17 +218,11 @@ export default function NewInvoicePage() {
 
   return (
     <div className="space-y-4 sm:space-y-6 pb-safe">
-      {/* Header */}
       <div className="flex items-center gap-3">
         <button onClick={() => router.back()} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
           <ArrowRight size={24} />
         </button>
         <h1 className="text-xl sm:text-2xl font-bold text-gray-900">فاتورة جديدة</h1>
-        {offline && (
-          <span className="flex items-center gap-1 text-xs bg-yellow-100 text-yellow-700 px-2 py-1 rounded-full">
-            <WifiOff size={12} /> بدون نت
-          </span>
-        )}
       </div>
 
       {/* العميل */}
@@ -449,7 +318,7 @@ export default function NewInvoicePage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pb-4">
         <Button onClick={() => handleSave(true)} variant="primary" fullWidth disabled={saving}>
           <Printer size={20} />
-          {saving ? 'جاري الحفظ...' : offline ? 'حفظ بدون طباعة' : 'حفظ وطباعة'}
+          {saving ? 'جاري الحفظ...' : 'حفظ وطباعة'}
         </Button>
         <Button onClick={() => handleSave(false)} variant="secondary" fullWidth disabled={saving}>
           <Save size={20} />
