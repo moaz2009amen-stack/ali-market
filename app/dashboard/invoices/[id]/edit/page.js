@@ -15,11 +15,11 @@ export default function EditInvoicePage() {
   const params   = useParams()
   const supabase = createClient()
 
-  const [loading, setLoading]   = useState(true)
-  const [saving, setSaving]     = useState(false)
+  const [loading, setLoading]       = useState(true)
+  const [saving, setSaving]         = useState(false)
   const [paidAmount, setPaidAmount] = useState('')
-  const [notes, setNotes]       = useState('')
-  const [invoice, setInvoice]   = useState(null)
+  const [notes, setNotes]           = useState('')
+  const [invoice, setInvoice]       = useState(null)
 
   useEffect(() => { fetchInvoice() }, [])
 
@@ -27,7 +27,7 @@ export default function EditInvoicePage() {
     try {
       const { data, error } = await supabase
         .from('invoices')
-        .select(`*, customers (name), invoice_items (*)`)
+        .select('*, customers(name), invoice_items(*)')
         .eq('id', params.id)
         .single()
       if (error) throw error
@@ -44,47 +44,37 @@ export default function EditInvoicePage() {
 
   const handleUpdate = async () => {
     const newPaid = parseFloat(paidAmount) || 0
-    if (newPaid < 0) { toast.error('المبلغ المدفوع لا يمكن أن يكون سالباً'); return }
-    if (newPaid > invoice.total_amount) { toast.error('المبلغ المدفوع أكبر من إجمالي الفاتورة'); return }
+    if (newPaid < 0) { toast.error('المبلغ لا يمكن أن يكون سالباً'); return }
+    if (newPaid > invoice.total_amount) { toast.error('المبلغ أكبر من إجمالي الفاتورة'); return }
 
     setSaving(true)
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      const remaining    = Math.max(0, invoice.total_amount - newPaid)
-      const paymentStatus =
-        newPaid >= invoice.total_amount ? 'paid' :
-        newPaid > 0                     ? 'partial' : 'unpaid'
+      const remaining     = Math.max(0, invoice.total_amount - newPaid)
+      const paymentStatus = newPaid >= invoice.total_amount ? 'paid' : newPaid > 0 ? 'partial' : 'unpaid'
 
-      // ✅ تحديث الفاتورة مباشرة — paid_amount الصحيح بدون trigger
       const { error } = await supabase
         .from('invoices')
-        .update({
-          paid_amount:      newPaid,
-          remaining_amount: remaining,
-          payment_status:   paymentStatus,
-          notes:            notes
-        })
+        .update({ paid_amount: newPaid, remaining_amount: remaining, payment_status: paymentStatus, notes })
         .eq('id', params.id)
       if (error) throw error
 
-      // ✅ لو الـ paid زاد عن القيمة القديمة — سجّل الفرق كتحصيل جديد (للتاريخ)
+      // سجّل دفعة إضافية لو المبلغ زاد
       const oldPaid = parseFloat(invoice.paid_amount || 0)
       const diff    = newPaid - oldPaid
       if (diff > 0) {
+        // ✅ بدون collected_by
         await supabase.from('payments').insert([{
           customer_id:    invoice.customer_id,
           invoice_id:     invoice.id,
           amount:         diff,
           payment_method: 'نقدي',
-          collected_by:   user.id
         }])
       }
 
       toast.success('تم تحديث الفاتورة بنجاح')
       router.push('/dashboard/invoices')
     } catch (error) {
-      console.error('Update error:', error)
-      toast.error('حدث خطأ في التحديث')
+      toast.error(`حدث خطأ: ${error.message}`)
     } finally {
       setSaving(false)
     }
@@ -111,12 +101,12 @@ export default function EditInvoicePage() {
       <Card title="تفاصيل الفاتورة">
         <div className="space-y-4">
           <div className="bg-gray-50 p-4 rounded-lg">
-            <p className="text-sm text-gray-600 mb-1">العميل</p>
-            <p className="font-bold text-gray-900">{invoice.customers?.name}</p>
+            <p className="text-sm text-gray-500 mb-1">العميل</p>
+            <p className="font-bold">{invoice.customers?.name}</p>
           </div>
 
           <div className="bg-gray-50 p-4 rounded-lg">
-            <p className="text-sm text-gray-600 mb-2">المنتجات</p>
+            <p className="text-sm text-gray-500 mb-2">المنتجات</p>
             <div className="space-y-2">
               {invoice.invoice_items.map((item, i) => (
                 <div key={i} className="flex justify-between text-sm">
@@ -129,19 +119,13 @@ export default function EditInvoicePage() {
 
           <Input
             label={`المبلغ المدفوع (الحالي: ${formatCurrency(invoice.paid_amount)})`}
-            type="number"
-            value={paidAmount}
+            type="number" value={paidAmount}
             onChange={e => setPaidAmount(e.target.value)}
-            step="0.01"
-            max={total}
+            step="0.01" max={total}
           />
 
-          <Input
-            label="ملاحظات"
-            value={notes}
-            onChange={e => setNotes(e.target.value)}
-            placeholder="ملاحظات اختيارية..."
-          />
+          <Input label="ملاحظات" value={notes}
+            onChange={e => setNotes(e.target.value)} placeholder="ملاحظات اختيارية..." />
 
           <div className="bg-primary-50 p-4 rounded-lg space-y-2">
             <div className="flex justify-between">
@@ -165,12 +149,10 @@ export default function EditInvoicePage() {
               <Save size={20} />
               {saving ? 'جاري الحفظ...' : 'حفظ التعديلات'}
             </Button>
-            <Button onClick={() => router.back()} variant="secondary" fullWidth>
-              إلغاء
-            </Button>
+            <Button onClick={() => router.back()} variant="secondary" fullWidth>إلغاء</Button>
           </div>
         </div>
       </Card>
     </div>
   )
-}
+    }
